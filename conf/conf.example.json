@@ -1,0 +1,21 @@
+{
+  "api_key": "",
+  "api_key_pass": "",
+  "default_addr": "demo.gate.kickex.com",
+  "scheme": "wss",
+  "pair": "KICK/USDT",
+  "max_completed_orders": 2,
+  "pairs": {
+    "KICK/USDT": {
+      "price_step": "0.0000001",
+      "spread_for_start_trade": "3",
+      "spread_for_stop_trade": "0.8",
+      "max_completed_orders": 2,
+      "price_precision": 7,
+      "order_volume_precision": 0,
+      "total_buy_amount_in_usdt": 1.1
+    }
+  },
+  "order_sleep_ms": 25,
+  "debug": false
+}

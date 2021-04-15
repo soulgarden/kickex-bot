@@ -1,0 +1,12 @@
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - funlen
+    - path: /
+      linters:
+        - gci
+        - gofumpt
+        - exhaustivestruct
+        - wrapcheck
+  enable-all: true
