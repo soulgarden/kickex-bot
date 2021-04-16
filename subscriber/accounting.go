@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 
+	"github.com/soulgarden/kickex-bot/dictionary"
+
 	"github.com/soulgarden/kickex-bot/conf"
 
 	"github.com/rs/zerolog"
@@ -43,7 +45,11 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal) error 
 
 	for {
 		select {
-		case msg := <-cli.ReadCh:
+		case msg, ok := <-cli.ReadCh:
+			if !ok {
+				return dictionary.ErrWsReadChannelClosed
+			}
+
 			s.logger.Debug().
 				Bytes("payload", msg).
 				Msg("got message")

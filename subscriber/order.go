@@ -81,17 +81,18 @@ func (s *Order) Start(ctx context.Context, interrupt chan os.Signal) error {
 	<-ctx.Done()
 	cancel()
 
+	//cleanup orders
 	if s.storage.Book.ActiveBuyOrderID > 1 {
 		if o, ok := s.storage.UserOrders[s.storage.Book.ActiveBuyOrderID]; ok && o.State < dictionary.StateDone {
 			err := s.cancelOrder(cli, s.storage.Book.ActiveBuyOrderID)
-			s.logger.Err(err).Int64("oid", s.storage.Book.ActiveBuyOrderID).Msg("cancel order")
+			s.logger.Err(err).Int64("oid", s.storage.Book.ActiveBuyOrderID).Msg("try to cancel active buy order")
 		}
 	}
 
 	if s.storage.Book.ActiveSellOrderID > 1 {
 		if o, ok := s.storage.UserOrders[s.storage.Book.ActiveSellOrderID]; ok && o.State < dictionary.StateDone {
 			err := s.cancelOrder(cli, s.storage.Book.ActiveSellOrderID)
-			s.logger.Err(err).Int64("oid", s.storage.Book.ActiveSellOrderID).Msg("cancel order")
+			s.logger.Err(err).Int64("oid", s.storage.Book.ActiveSellOrderID).Msg("try to cancel active sell order")
 		}
 	}
 
@@ -140,7 +141,11 @@ func (s *Order) orderCreationDecider(ctx context.Context, cli *client.Client) {
 func (s *Order) listenNewOrders(ctx context.Context, interrupt chan os.Signal, cli *client.Client) {
 	for {
 		select {
-		case msg := <-cli.ReadCh:
+		case msg, ok := <-cli.ReadCh:
+			if !ok {
+				return
+			}
+
 			s.logger.Warn().
 				Bytes("payload", msg).
 				Msg("got message")
@@ -325,7 +330,10 @@ func (s *Order) manageOrder(ctx context.Context, interrupt chan os.Signal, order
 						s.logger.Fatal().Int64("oid", orderID).Msg("cancel buy order")
 					}
 
-					msg := <-cli.ReadCh
+					msg, ok := <-cli.ReadCh
+					if !ok {
+						return
+					}
 
 					s.logger.Info().
 						Int64("oid", orderID).
@@ -377,7 +385,10 @@ func (s *Order) manageOrder(ctx context.Context, interrupt chan os.Signal, order
 						s.logger.Fatal().Int64("oid", orderID).Msg("cancel buy order for move")
 					}
 
-					msg := <-cli.ReadCh
+					msg, ok := <-cli.ReadCh
+					if !ok {
+						return
+					}
 
 					s.logger.Warn().
 						Int64("oid", orderID).
@@ -510,12 +521,15 @@ func (s *Order) cancelOrder(cli *client.Client, orderID int64) error {
 		s.logger.Fatal().Int64("oid", orderID).Msg("cancel order")
 	}
 
-	msg := <-cli.ReadCh
+	msg, ok := <-cli.ReadCh
+	if !ok {
+		return nil
+	}
 
 	s.logger.Info().
 		Int64("oid", orderID).
 		Bytes("payload", msg).
-		Msg("cancel order response")
+		Msg("cancel order response received")
 
 	er := &response.Error{}
 

@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	ShutDownDuration = time.Second * 3
+	ShutDownDuration = time.Second * 5
 )
 
 //nolint: gochecknoglobals
@@ -82,6 +82,8 @@ var startCmd = &cobra.Command{
 		}()
 
 		<-interrupt
+
+		logger.Warn().Msg("shutting down...")
 
 		cancel()
 

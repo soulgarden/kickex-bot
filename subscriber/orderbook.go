@@ -58,7 +58,11 @@ func (s *OrderBook) Start(ctx context.Context, interrupt chan os.Signal) error {
 
 	for {
 		select {
-		case msg := <-cli.ReadCh:
+		case msg, ok := <-cli.ReadCh:
+			if !ok {
+				return dictionary.ErrWsReadChannelClosed
+			}
+
 			r := &response.BookResponse{}
 
 			s.logger.Debug().Bytes("payload", msg).Msg("got message")

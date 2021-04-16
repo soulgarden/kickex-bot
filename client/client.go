@@ -69,13 +69,17 @@ func (c *Client) read() {
 				websocket.CloseGoingAway,
 				websocket.CloseNormalClosure,
 			) {
-				c.logger.Warn().Err(err).Msg("Unexpected close error")
+				c.logger.Warn().Err(err).Msg("unexpected close error")
 			}
 
 			break
 		}
 
-		c.ReadCh <- sourceMessage
+		if c.isClosed.IsNotSet() {
+			c.ReadCh <- sourceMessage
+		} else {
+			c.logger.Warn().Bytes("payload", sourceMessage).Msg("got message, but read channel closed")
+		}
 	}
 }
 
@@ -97,7 +101,7 @@ func (c *Client) write(interrupt chan os.Signal) {
 				c.logger.Warn().Err(err).Msg("Unexpected close error")
 			}
 
-			if msg.Type == websocket.PingMessage {
+			if c.isClosed.IsNotSet() && msg.Type == websocket.PingMessage {
 				c.logger.Err(err).Interface("msg", msg).Msg("ping failed, interrupt")
 				interrupt <- syscall.SIGSTOP
 			}
@@ -110,14 +114,23 @@ func (c *Client) pinger() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		c.sendCh <- Msg{Type: websocket.PingMessage}
+		if c.isClosed.IsNotSet() {
+			c.sendCh <- Msg{Type: websocket.PingMessage}
+		}
 	}
 }
 
 func (c *Client) Close() {
+	if c.isClosed.IsSet() {
+		return
+	}
+
 	c.isClosed.Set()
 
 	c.sendCh <- Msg{Type: websocket.CloseMessage, Payload: websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")}
+
+	close(c.sendCh)
+	close(c.ReadCh)
 }
 
 func (c *Client) authorize(apiKey, apiKeyPass string) error {
@@ -230,7 +243,11 @@ func (c *Client) sendMessage(payload interface{}) error {
 
 	c.logger.Debug().Bytes("body", body).Msg("send")
 
-	c.sendCh <- Msg{Type: websocket.TextMessage, Payload: body}
+	if c.isClosed.IsNotSet() {
+		c.sendCh <- Msg{Type: websocket.TextMessage, Payload: body}
+	} else {
+		c.logger.Warn().Interface("payload", payload).Msg("got message fot sent, but write channel closed")
+	}
 
 	return nil
 }
@@ -278,7 +295,10 @@ func NewWsCli(cfg *conf.Bot, interrupt chan os.Signal, logger *zerolog.Logger) (
 		return nil, err
 	}
 
-	msg := <-cli.ReadCh
+	msg, ok := <-cli.ReadCh
+	if !ok {
+		return nil, dictionary.ErrWsReadChannelClosed
+	}
 
 	logger.Debug().
 		Bytes("payload", msg).
