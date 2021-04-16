@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -15,7 +16,6 @@ import (
 )
 
 const (
-	eventChSize      = 1024
 	ShutDownDuration = time.Second * 3
 )
 
@@ -28,15 +28,12 @@ var startCmd = &cobra.Command{
 		cfg := conf.New()
 
 		defaultLogLevel := zerolog.InfoLevel
-
 		if cfg.Debug {
 			defaultLogLevel = zerolog.DebugLevel
 		}
 
 		logger := zerolog.New(os.Stdout).Level(defaultLogLevel).With().Caller().Logger()
-
-		eventCh := make(chan int, eventChSize)
-
+		eventBroker := subscriber.NewBroker()
 		st := storage.NewStorage()
 
 		interrupt := make(chan os.Signal, 1)
@@ -44,16 +41,44 @@ var startCmd = &cobra.Command{
 
 		ctx, cancel := context.WithCancel(context.Background())
 
-		orderManager := subscriber.NewOrder(cfg, st, &logger)
+		orderManager, err := subscriber.NewOrder(cfg, st, eventBroker, &logger)
+		if err != nil {
+			cancel()
+			os.Exit(1)
+		}
+
+		orderBook, err := subscriber.NewOrderBook(cfg, st, eventBroker, &logger)
+		if err != nil {
+			cancel()
+			os.Exit(1)
+		}
+
+		accounting := subscriber.NewAccounting(cfg, st, eventBroker, &logger)
+
+		go eventBroker.Start(ctx)
 
 		go func() {
-			log.Err(subscriber.SubscribeOrderBook(ctx, cfg, st, eventCh, &logger)).Msg("stop subscribe order book")
+			err := orderBook.Start(ctx, interrupt)
+			if err != nil {
+				interrupt <- syscall.SIGINT
+			}
+
+			log.Err(err).Msg("stop subscribe order book")
 		}()
 		go func() {
-			log.Err(subscriber.SubscribeAccounting(ctx, cfg, st, eventCh, &logger)).Msg("stop subscribe acc")
+			err := accounting.Start(ctx, interrupt)
+			if err != nil {
+				interrupt <- syscall.SIGINT
+			}
+
+			log.Err(err).Msg("stop subscribe acc")
 		}()
 		go func() {
-			log.Err(orderManager.Start(ctx, eventCh)).Msg("stop order manager")
+			err := orderManager.Start(ctx, interrupt)
+			if err != nil {
+				interrupt <- syscall.SIGINT
+			}
+			log.Err(err).Msg("stop order manager")
 		}()
 
 		<-interrupt

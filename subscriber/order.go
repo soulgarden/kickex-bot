@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"math/big"
+	"os"
 	"sync/atomic"
-	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/soulgarden/kickex-bot/client"
@@ -19,16 +19,19 @@ type Order struct {
 	cfg                 *conf.Bot
 	pair                *conf.Pair
 	storage             *storage.Storage
+	eventBroker         *Broker
 	priceStep           *big.Float
 	spreadForStartTrade *big.Float
 	spreadForStopTrade  *big.Float
 	logger              *zerolog.Logger
 }
 
-func NewOrder(cfg *conf.Bot, storage *storage.Storage, logger *zerolog.Logger) *Order {
+func NewOrder(cfg *conf.Bot, storage *storage.Storage, eventBroker *Broker, logger *zerolog.Logger) (*Order, error) {
 	pair, ok := cfg.Pairs[cfg.Pair]
 	if !ok {
-		logger.Fatal().Msg("pair is missing in pairs list")
+		logger.Err(dictionary.ErrInvalidPair).Msg(dictionary.ErrInvalidPair.Error())
+
+		return nil, dictionary.ErrInvalidPair
 	}
 
 	priceStep, ok := big.NewFloat(0).SetString(pair.PriceStep)
@@ -50,16 +53,17 @@ func NewOrder(cfg *conf.Bot, storage *storage.Storage, logger *zerolog.Logger) *
 		cfg:                 cfg,
 		pair:                cfg.Pairs[cfg.Pair],
 		storage:             storage,
+		eventBroker:         eventBroker,
 		priceStep:           priceStep,
 		spreadForStartTrade: spreadForStartTrade,
 		spreadForStopTrade:  spreadForStopTrade,
 		logger:              logger,
-	}
+	}, nil
 }
 
-func (s *Order) Start(ctx context.Context, eventCh chan int) error {
+func (s *Order) Start(ctx context.Context, interrupt chan os.Signal) error {
 	orderCtx, cancel := context.WithCancel(ctx)
-	cli, err := client.NewWsCli(s.cfg, s.logger)
+	cli, err := client.NewWsCli(s.cfg, interrupt, s.logger)
 
 	if err != nil {
 		s.logger.Err(err).Msg("connection error")
@@ -71,26 +75,33 @@ func (s *Order) Start(ctx context.Context, eventCh chan int) error {
 
 	defer cli.Close()
 
-	go s.orderCreationDecider(orderCtx, eventCh, cli)
-	go s.listenNewOrders(orderCtx, eventCh, cli)
+	go s.orderCreationDecider(orderCtx, cli)
+	go s.listenNewOrders(orderCtx, interrupt, cli)
 
 	<-ctx.Done()
 	cancel()
 
 	if s.storage.Book.ActiveBuyOrderID > 1 {
-		err := s.cancelOrder(cli, s.storage.Book.ActiveBuyOrderID)
-		s.logger.Err(err).Int64("oid", s.storage.Book.ActiveBuyOrderID).Msg("cancel order")
+		if o, ok := s.storage.UserOrders[s.storage.Book.ActiveBuyOrderID]; ok && o.State < dictionary.StateDone {
+			err := s.cancelOrder(cli, s.storage.Book.ActiveBuyOrderID)
+			s.logger.Err(err).Int64("oid", s.storage.Book.ActiveBuyOrderID).Msg("cancel order")
+		}
 	}
 
 	if s.storage.Book.ActiveSellOrderID > 1 {
-		err := s.cancelOrder(cli, s.storage.Book.ActiveSellOrderID)
-		s.logger.Err(err).Int64("oid", s.storage.Book.ActiveSellOrderID).Msg("cancel order")
+		if o, ok := s.storage.UserOrders[s.storage.Book.ActiveSellOrderID]; ok && o.State < dictionary.StateDone {
+			err := s.cancelOrder(cli, s.storage.Book.ActiveSellOrderID)
+			s.logger.Err(err).Int64("oid", s.storage.Book.ActiveSellOrderID).Msg("cancel order")
+		}
 	}
 
 	return nil
 }
 
-func (s *Order) orderCreationDecider(ctx context.Context, e <-chan int, cli *client.Client) {
+func (s *Order) orderCreationDecider(ctx context.Context, cli *client.Client) {
+	e := s.eventBroker.Subscribe()
+	defer s.eventBroker.Unsubscribe(e)
+
 	for {
 		select {
 		case <-e:
@@ -126,13 +137,13 @@ func (s *Order) orderCreationDecider(ctx context.Context, e <-chan int, cli *cli
 	}
 }
 
-func (s *Order) listenNewOrders(ctx context.Context, e chan<- int, cli *client.Client) {
+func (s *Order) listenNewOrders(ctx context.Context, interrupt chan os.Signal, cli *client.Client) {
 	for {
 		select {
 		case msg := <-cli.ReadCh:
 			s.logger.Warn().
 				Bytes("payload", msg).
-				Msg("Got message")
+				Msg("got message")
 
 			er := &response.Error{}
 
@@ -152,7 +163,7 @@ func (s *Order) listenNewOrders(ctx context.Context, e chan<- int, cli *client.C
 				s.logger.Fatal().Err(err).Bytes("msg", msg).Msg("unmarshall")
 			}
 
-			go s.manageOrder(ctx, co.OrderID, e)
+			go s.manageOrder(ctx, interrupt, co.OrderID)
 
 		case <-ctx.Done():
 			return
@@ -232,26 +243,26 @@ func (s *Order) createSellOrder(cli *client.Client) {
 	atomic.StoreInt64(&s.storage.Book.ActiveSellOrderID, extID)
 }
 
-func (s *Order) manageOrder(ctx context.Context, orderID int64, e chan<- int) {
+func (s *Order) manageOrder(ctx context.Context, interrupt chan os.Signal, orderID int64) {
 	s.logger.Warn().Int64("oid", orderID).Msg("start order manager process")
+
+	e := s.eventBroker.Subscribe()
 
 	defer func() {
 		s.logger.Warn().Int64("oid", orderID).Msg("stop order manager process")
+		s.eventBroker.Unsubscribe(e)
 	}()
 
-	cli, err := client.NewWsCli(s.cfg, s.logger)
+	cli, err := client.NewWsCli(s.cfg, interrupt, s.logger)
 	if err != nil {
 		s.logger.Fatal().Err(err).Msg("connection error")
 	}
 
 	defer cli.Close()
 
-	timer := time.NewTimer(time.Millisecond * time.Duration(s.cfg.OrderSleepMS))
-	defer timer.Stop()
-
 	for {
 		select {
-		case <-timer.C:
+		case <-e:
 			// order sent, wait creation
 			order, ok := s.storage.UserOrders[orderID]
 			if !ok {
@@ -347,7 +358,7 @@ func (s *Order) manageOrder(ctx context.Context, orderID int64, e chan<- int) {
 
 				previousPossiblePrice := big.NewFloat(0).Sub(buyOrderPrice, s.priceStep)
 
-				_, prevPriceExists := s.storage.Book.Bids[previousPossiblePrice.Text('f', s.pair.PricePrecision)]
+				prevPriceExists := s.storage.Book.GetBid(previousPossiblePrice.Text('f', s.pair.PricePrecision)) != nil
 				nextPriceExists := s.storage.Book.GetMaxBidPrice().Cmp(buyOrderPrice) == 1
 
 				if nextPriceExists || !prevPriceExists {
@@ -388,7 +399,7 @@ func (s *Order) manageOrder(ctx context.Context, orderID int64, e chan<- int) {
 
 					atomic.StoreInt64(&s.storage.Book.ActiveBuyOrderID, 0)
 
-					e <- 0 // don't wait change order book
+					s.eventBroker.Publish(0) // don't wait change order book
 
 					return
 				}
@@ -422,7 +433,7 @@ func (s *Order) manageOrder(ctx context.Context, orderID int64, e chan<- int) {
 
 				previousPossiblePrice := big.NewFloat(0).Add(sellOrderPrice, s.priceStep)
 
-				_, prevPriceExists := s.storage.Book.Asks[previousPossiblePrice.Text('f', s.pair.PricePrecision)]
+				prevPriceExists := s.storage.Book.GetAsk(previousPossiblePrice.Text('f', s.pair.PricePrecision)) != nil
 				nextPriceExists := s.storage.Book.GetMinAskPrice().Cmp(sellOrderPrice) == -1
 
 				if nextPriceExists || !prevPriceExists {
@@ -443,7 +454,7 @@ func (s *Order) manageOrder(ctx context.Context, orderID int64, e chan<- int) {
 
 					atomic.StoreInt64(&s.storage.Book.ActiveSellOrderID, 1) // need to create new sell order
 
-					e <- 0 // don't wait change order book
+					s.eventBroker.Publish(0) // don't wait change order book
 
 					return
 				}

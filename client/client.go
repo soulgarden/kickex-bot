@@ -3,8 +3,10 @@ package client
 import (
 	"encoding/json"
 	"net/url"
+	"os"
 	"strconv"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/soulgarden/kickex-bot/conf"
@@ -15,20 +17,27 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/soulgarden/kickex-bot/request"
+	"github.com/tevino/abool"
 )
 
 const pingInterval = 15 * time.Second
 const readChSize = 256
 const writeChSize = 1024
-const readDeadline = 60 * time.Second
+const readDeadline = 20 * time.Second
 const eventSize = 8192
 
 type Client struct {
-	id     int64
-	conn   *websocket.Conn
-	sendCh chan []byte
-	ReadCh chan []byte
-	logger *zerolog.Logger
+	id       int64
+	conn     *websocket.Conn
+	sendCh   chan Msg
+	ReadCh   chan []byte
+	logger   *zerolog.Logger
+	isClosed *abool.AtomicBool
+}
+
+type Msg struct {
+	Type    int
+	Payload []byte
 }
 
 func (c *Client) read() {
@@ -52,14 +61,13 @@ func (c *Client) read() {
 		_, sourceMessage, err := c.conn.ReadMessage()
 		c.logger.Debug().
 			Bytes("payload", sourceMessage).
-			Msg("Got message")
+			Msg("got message")
 
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(
 				err,
 				websocket.CloseGoingAway,
 				websocket.CloseNormalClosure,
-				websocket.CloseAbnormalClosure,
 			) {
 				c.logger.Warn().Err(err).Msg("Unexpected close error")
 			}
@@ -71,22 +79,28 @@ func (c *Client) read() {
 	}
 }
 
-func (c *Client) write() {
+func (c *Client) write(interrupt chan os.Signal) {
 	for {
-		message, ok := <-c.sendCh
+		msg, ok := <-c.sendCh
 
 		if !ok {
 			return
 		}
 
-		err := c.conn.WriteMessage(websocket.TextMessage, message)
-		if websocket.IsUnexpectedCloseError(
-			err,
-			websocket.CloseGoingAway,
-			websocket.CloseNormalClosure,
-			websocket.CloseAbnormalClosure,
-		) {
-			c.logger.Warn().Err(err).Msg("Unexpected close error")
+		err := c.conn.WriteMessage(msg.Type, msg.Payload)
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(
+				err,
+				websocket.CloseGoingAway,
+				websocket.CloseNormalClosure,
+			) {
+				c.logger.Warn().Err(err).Msg("Unexpected close error")
+			}
+
+			if msg.Type == websocket.PingMessage {
+				c.logger.Err(err).Interface("msg", msg).Msg("ping failed, interrupt")
+				interrupt <- syscall.SIGSTOP
+			}
 		}
 	}
 }
@@ -96,31 +110,14 @@ func (c *Client) pinger() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-			if websocket.IsUnexpectedCloseError(
-				err,
-				websocket.CloseGoingAway,
-				websocket.CloseNormalClosure,
-				websocket.CloseAbnormalClosure,
-			) {
-				c.logger.Warn().Err(err).Msg("Unexpected close error")
-			}
-
-			return
-		}
+		c.sendCh <- Msg{Type: websocket.PingMessage}
 	}
 }
 
 func (c *Client) Close() {
-	err := c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-	if websocket.IsUnexpectedCloseError(
-		err,
-		websocket.CloseGoingAway,
-		websocket.CloseNormalClosure,
-		websocket.CloseAbnormalClosure,
-	) {
-		c.logger.Warn().Err(err).Msg("Unexpected close error")
-	}
+	c.isClosed.Set()
+
+	c.sendCh <- Msg{Type: websocket.CloseMessage, Payload: websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")}
 }
 
 func (c *Client) authorize(apiKey, apiKeyPass string) error {
@@ -233,7 +230,7 @@ func (c *Client) sendMessage(payload interface{}) error {
 
 	c.logger.Debug().Bytes("body", body).Msg("send")
 
-	c.sendCh <- body
+	c.sendCh <- Msg{Type: websocket.TextMessage, Payload: body}
 
 	return nil
 }
@@ -249,16 +246,17 @@ func newConnection(url string, logger *zerolog.Logger) (*Client, error) {
 	logger.Debug().Msg("New connection established")
 
 	cli := &Client{
-		conn:   conn,
-		sendCh: make(chan []byte, writeChSize),
-		ReadCh: make(chan []byte, readChSize),
-		logger: logger,
+		conn:     conn,
+		sendCh:   make(chan Msg, writeChSize),
+		ReadCh:   make(chan []byte, readChSize),
+		logger:   logger,
+		isClosed: abool.New(),
 	}
 
 	return cli, err
 }
 
-func NewWsCli(cfg *conf.Bot, logger *zerolog.Logger) (*Client, error) {
+func NewWsCli(cfg *conf.Bot, interrupt chan os.Signal, logger *zerolog.Logger) (*Client, error) {
 	cli, err := newConnection(
 		(&url.URL{Scheme: cfg.Scheme, Host: cfg.DefaultAddr, Path: "/ws"}).String(),
 		logger,
@@ -270,7 +268,7 @@ func NewWsCli(cfg *conf.Bot, logger *zerolog.Logger) (*Client, error) {
 	}
 
 	go cli.read()
-	go cli.write()
+	go cli.write(interrupt)
 	go cli.pinger()
 
 	err = cli.authorize(cfg.APIKey, cfg.APIKeyPass)
@@ -294,7 +292,7 @@ func NewWsCli(cfg *conf.Bot, logger *zerolog.Logger) (*Client, error) {
 	}
 
 	if er.Error != nil {
-		logger.Fatal().Err(err).Msg("auth error")
+		logger.Fatal().Err(err).Bytes("payload", msg).Msg("auth error")
 	}
 
 	return cli, nil

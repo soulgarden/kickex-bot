@@ -20,8 +20,8 @@ type Storage struct {
 func NewStorage() *Storage {
 	return &Storage{
 		Book: &Book{
-			Bids:   make(map[string]*response.Order),
-			Asks:   make(map[string]*response.Order),
+			bids:   make(map[string]*response.Order),
+			asks:   make(map[string]*response.Order),
 			Spread: dictionary.ZeroBigFloat,
 		},
 		UserOrders: map[int64]*response.AccountingOrder{},
@@ -33,8 +33,8 @@ func NewStorage() *Storage {
 type Book struct {
 	mx sync.RWMutex
 
-	Bids        map[string]*response.Order
-	Asks        map[string]*response.Order
+	bids        map[string]*response.Order
+	asks        map[string]*response.Order
 	maxBidPrice *big.Float
 	minAskPrice *big.Float
 	LastPrice   string
@@ -73,16 +73,28 @@ func (b *Book) AddBid(price string, bid *response.Order) bool {
 	b.mx.Lock()
 	defer b.mx.Unlock()
 
-	b.Bids[price] = bid
+	b.bids[price] = bid
 
 	return b.updateMaxBidPrice()
+}
+
+func (b *Book) GetBid(price string) *response.Order {
+	b.mx.RLock()
+	defer b.mx.RUnlock()
+
+	val, ok := b.bids[price]
+	if !ok {
+		return nil
+	}
+
+	return val
 }
 
 func (b *Book) DeleteBid(price string) bool {
 	b.mx.Lock()
 	defer b.mx.Unlock()
 
-	delete(b.Bids, price)
+	delete(b.bids, price)
 
 	return b.updateMaxBidPrice()
 }
@@ -91,25 +103,37 @@ func (b *Book) AddAsk(price string, ask *response.Order) bool {
 	b.mx.Lock()
 	defer b.mx.Unlock()
 
-	b.Asks[price] = ask
+	b.asks[price] = ask
 
 	return b.updateMinAskPrice()
+}
+
+func (b *Book) GetAsk(price string) *response.Order {
+	b.mx.RLock()
+	defer b.mx.RUnlock()
+
+	val, ok := b.asks[price]
+	if !ok {
+		return nil
+	}
+
+	return val
 }
 
 func (b *Book) DeleteAsk(price string) bool {
 	b.mx.Lock()
 	defer b.mx.Unlock()
 
-	delete(b.Asks, price)
+	delete(b.asks, price)
 
 	return b.updateMinAskPrice()
 }
 
 func (b *Book) updateMaxBidPrice() bool {
-	if len(b.Bids) > 0 {
+	if len(b.bids) > 0 {
 		bidsPrices := []string{}
 
-		for price := range b.Bids {
+		for price := range b.bids {
 			bidsPrices = append(bidsPrices, price)
 		}
 
@@ -129,10 +153,10 @@ func (b *Book) updateMaxBidPrice() bool {
 }
 
 func (b *Book) updateMinAskPrice() bool {
-	if len(b.Asks) > 0 {
+	if len(b.asks) > 0 {
 		askPrices := []string{}
 
-		for price := range b.Asks {
+		for price := range b.asks {
 			askPrices = append(askPrices, price)
 		}
 

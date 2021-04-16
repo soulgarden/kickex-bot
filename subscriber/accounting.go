@@ -3,6 +3,7 @@ package subscriber
 import (
 	"context"
 	"encoding/json"
+	"os"
 
 	"github.com/soulgarden/kickex-bot/conf"
 
@@ -12,16 +13,21 @@ import (
 	"github.com/soulgarden/kickex-bot/storage"
 )
 
-func SubscribeAccounting(
-	ctx context.Context,
-	cfg *conf.Bot,
-	storage *storage.Storage,
-	eventCh chan<- int,
-	logger *zerolog.Logger,
-) error {
-	cli, err := client.NewWsCli(cfg, logger)
+type Accounting struct {
+	cfg         *conf.Bot
+	storage     *storage.Storage
+	eventBroker *Broker
+	logger      *zerolog.Logger
+}
+
+func NewAccounting(cfg *conf.Bot, storage *storage.Storage, eventBroker *Broker, logger *zerolog.Logger) *Accounting {
+	return &Accounting{cfg: cfg, storage: storage, eventBroker: eventBroker, logger: logger}
+}
+
+func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal) error {
+	cli, err := client.NewWsCli(s.cfg, interrupt, s.logger)
 	if err != nil {
-		logger.Err(err).Msg("connection error")
+		s.logger.Err(err).Msg("connection error")
 
 		return err
 	}
@@ -30,7 +36,7 @@ func SubscribeAccounting(
 
 	err = cli.SubscribeAccounting(false)
 	if err != nil {
-		logger.Err(err).Msg("subscribe accounting")
+		s.logger.Err(err).Msg("subscribe accounting")
 
 		return err
 	}
@@ -38,35 +44,35 @@ func SubscribeAccounting(
 	for {
 		select {
 		case msg := <-cli.ReadCh:
-			logger.Debug().
+			s.logger.Debug().
 				Bytes("payload", msg).
-				Msg("Got message")
+				Msg("got message")
 
 			er := &response.Error{}
 
 			err = json.Unmarshal(msg, er)
 			if err != nil {
-				logger.Fatal().Err(err).Bytes("msg", msg).Msg("unmarshall")
+				s.logger.Fatal().Err(err).Bytes("msg", msg).Msg("unmarshall")
 			}
 
 			if er.Error != nil {
-				logger.Fatal().Bytes("response", msg).Err(err).Msg("received error")
+				s.logger.Fatal().Bytes("response", msg).Err(err).Msg("received error")
 			}
 
 			r := &response.AccountingUpdates{}
 			err := json.Unmarshal(msg, r)
 
 			if err != nil {
-				logger.Fatal().Err(err).Bytes("msg", msg).Msg("unmarshall")
+				s.logger.Fatal().Err(err).Bytes("msg", msg).Msg("unmarshall")
 
 				return err
 			}
 
 			for _, order := range r.Orders {
-				storage.UserOrders[order.ID] = order
+				s.storage.UserOrders[order.ID] = order
 			}
 
-			eventCh <- 0
+			s.eventBroker.Publish(0)
 		case <-ctx.Done():
 			cli.Close()
 
