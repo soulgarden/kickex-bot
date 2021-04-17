@@ -26,7 +26,8 @@ type Bot struct {
 
 type Pair struct {
 	PriceStep            string  `json:"price_step" required:"true"`
-	SpreadForStartTrade  string  `json:"spread_for_start_trade" required:"true"`
+	SpreadForStartBuy    string  `json:"spread_for_start_buy" required:"true"`
+	SpreadForStartSell   string  `json:"spread_for_start_sell" required:"true"`
 	SpreadForStopTrade   string  `json:"spread_for_stop_trade" required:"true"`
 	MaxCompletedOrders   int     `json:"max_completed_orders" required:"true"`
 	PricePrecision       int     `json:"price_precision" required:"true"`

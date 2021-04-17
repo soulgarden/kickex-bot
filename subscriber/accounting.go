@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"syscall"
 
 	"github.com/soulgarden/kickex-bot/dictionary"
 
@@ -36,7 +37,7 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal) error 
 
 	defer cli.Close()
 
-	err = cli.SubscribeAccounting(false)
+	err = cli.SubscribeAccounting(true)
 	if err != nil {
 		s.logger.Err(err).Msg("subscribe accounting")
 
@@ -78,9 +79,15 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal) error 
 				s.storage.UserOrders[order.ID] = order
 			}
 
+			for _, balance := range r.Balance {
+				s.storage.Balances[balance.CurrencyCode] = balance
+			}
+
+			s.storage.Deals = append(s.storage.Deals, r.Deals...)
+
 			s.eventBroker.Publish(0)
 		case <-ctx.Done():
-			cli.Close()
+			interrupt <- syscall.SIGSTOP
 
 			return nil
 		}

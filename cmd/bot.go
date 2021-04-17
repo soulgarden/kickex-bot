@@ -74,7 +74,7 @@ var startCmd = &cobra.Command{
 			log.Err(err).Msg("stop subscribe acc")
 		}()
 		go func() {
-			err := orderManager.Start(ctx, interrupt)
+			err := orderManager.Start(ctx, interrupt, st)
 			if err != nil {
 				interrupt <- syscall.SIGINT
 			}

@@ -3,6 +3,7 @@ package storage
 import (
 	"math/big"
 	"sort"
+	"strconv"
 	"sync"
 
 	"github.com/soulgarden/kickex-bot/dictionary"
@@ -12,7 +13,7 @@ import (
 
 type Storage struct {
 	UserOrders map[int64]*response.AccountingOrder
-	Balances   []*response.Balance
+	Balances   map[string]*response.Balance
 	Deals      []*response.Deal
 	Book       *Book
 }
@@ -25,7 +26,7 @@ func NewStorage() *Storage {
 			Spread: dictionary.ZeroBigFloat,
 		},
 		UserOrders: map[int64]*response.AccountingOrder{},
-		Balances:   []*response.Balance{},
+		Balances:   map[string]*response.Balance{},
 		Deals:      []*response.Deal{},
 	}
 }
@@ -40,8 +41,11 @@ type Book struct {
 	LastPrice   string
 	Spread      *big.Float
 
-	ActiveBuyOrderID  int64
+	ActiveBuyOrderID int64
+	PrevBuyOrderID   int64
+
 	ActiveSellOrderID int64
+	PrevSellOrderID   int64
 
 	CompletedBuyOrders  int64
 	CompletedSellOrders int64
@@ -69,13 +73,11 @@ func (b *Book) setMinAskPrice(minAskPrice *big.Float) {
 	b.minAskPrice = minAskPrice
 }
 
-func (b *Book) AddBid(price string, bid *response.Order) bool {
+func (b *Book) AddBid(price string, bid *response.Order) {
 	b.mx.Lock()
 	defer b.mx.Unlock()
 
 	b.bids[price] = bid
-
-	return b.updateMaxBidPrice()
 }
 
 func (b *Book) GetBid(price string) *response.Order {
@@ -90,22 +92,18 @@ func (b *Book) GetBid(price string) *response.Order {
 	return val
 }
 
-func (b *Book) DeleteBid(price string) bool {
+func (b *Book) DeleteBid(price string) {
 	b.mx.Lock()
 	defer b.mx.Unlock()
 
 	delete(b.bids, price)
-
-	return b.updateMaxBidPrice()
 }
 
-func (b *Book) AddAsk(price string, ask *response.Order) bool {
+func (b *Book) AddAsk(price string, ask *response.Order) {
 	b.mx.Lock()
 	defer b.mx.Unlock()
 
 	b.asks[price] = ask
-
-	return b.updateMinAskPrice()
 }
 
 func (b *Book) GetAsk(price string) *response.Order {
@@ -120,26 +118,31 @@ func (b *Book) GetAsk(price string) *response.Order {
 	return val
 }
 
-func (b *Book) DeleteAsk(price string) bool {
+func (b *Book) DeleteAsk(price string) {
 	b.mx.Lock()
 	defer b.mx.Unlock()
 
 	delete(b.asks, price)
-
-	return b.updateMinAskPrice()
 }
 
-func (b *Book) updateMaxBidPrice() bool {
+func (b *Book) UpdateMaxBidPrice() bool {
 	if len(b.bids) > 0 {
-		bidsPrices := []string{}
+		bidsPrices := []float64{}
+		strToFloatPrices := map[float64]string{}
 
 		for price := range b.bids {
-			bidsPrices = append(bidsPrices, price)
+			pf, err := strconv.ParseFloat(price, 64)
+			if err != nil {
+				return false
+			}
+
+			bidsPrices = append(bidsPrices, pf)
+			strToFloatPrices[pf] = price
 		}
 
-		sort.Strings(bidsPrices)
+		sort.Float64s(bidsPrices)
 
-		maxBidPrice, ok := big.NewFloat(0).SetString(bidsPrices[len(bidsPrices)-1])
+		maxBidPrice, ok := big.NewFloat(0).SetString(strToFloatPrices[bidsPrices[len(bidsPrices)-1]])
 		if !ok {
 			return ok
 		}
@@ -152,17 +155,24 @@ func (b *Book) updateMaxBidPrice() bool {
 	return true
 }
 
-func (b *Book) updateMinAskPrice() bool {
+func (b *Book) UpdateMinAskPrice() bool {
 	if len(b.asks) > 0 {
-		askPrices := []string{}
+		askPrices := []float64{}
+		strToFloatPrices := map[float64]string{}
 
 		for price := range b.asks {
-			askPrices = append(askPrices, price)
+			pf, err := strconv.ParseFloat(price, 64)
+			if err != nil {
+				return false
+			}
+
+			askPrices = append(askPrices, pf)
+			strToFloatPrices[pf] = price
 		}
 
-		sort.Strings(askPrices)
+		sort.Float64s(askPrices)
 
-		minAskPrice, ok := big.NewFloat(0).SetString(askPrices[0])
+		minAskPrice, ok := big.NewFloat(0).SetString(strToFloatPrices[askPrices[0]])
 		if !ok {
 			return ok
 		}

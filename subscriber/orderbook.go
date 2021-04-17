@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"math/big"
 	"os"
+	"syscall"
 
 	"github.com/soulgarden/kickex-bot/dictionary"
 
@@ -87,45 +88,48 @@ func (s *OrderBook) Start(ctx context.Context, interrupt chan os.Signal) error {
 
 			s.storage.Book.LastPrice = r.LastPrice.Price
 
-			for _, bid := range r.Bids {
-				price, ok := big.NewFloat(0).SetString(bid.Price)
-				if !ok {
-					s.logger.Fatal().Err(err).Msg("parse bid price")
-				}
-
-				if bid.Total == "" {
-					ok = s.storage.Book.DeleteBid(price.Text('f', s.pair.PricePrecision))
+			if len(r.Bids) > 0 {
+				for _, bid := range r.Bids {
+					price, ok := big.NewFloat(0).SetString(bid.Price)
 					if !ok {
-						s.logger.Fatal().Err(err).Msg("delete bid")
+						s.logger.Fatal().Err(err).Msg("parse bid price")
 					}
 
-					continue
+					if bid.Total == "" {
+						s.storage.Book.DeleteBid(price.Text('f', s.pair.PricePrecision))
+
+						continue
+					}
+
+					s.storage.Book.AddBid(price.Text('f', s.pair.PricePrecision), bid)
 				}
 
-				ok = s.storage.Book.AddBid(price.Text('f', s.pair.PricePrecision), bid)
+				s.storage.Book.UpdateMaxBidPrice()
+
 				if !ok {
-					s.logger.Fatal().Err(err).Msg("add bid")
+					s.logger.Fatal().Err(err).Msg("update max bid price error")
 				}
 			}
 
-			for _, ask := range r.Asks {
-				price, ok := big.NewFloat(0).SetString(ask.Price)
-				if !ok {
-					s.logger.Fatal().Err(err).Msg("parse ask price")
-				}
-
-				if ask.Total == "" {
-					ok = s.storage.Book.DeleteAsk(price.Text('f', s.pair.PricePrecision))
+			if len(r.Asks) > 0 {
+				for _, ask := range r.Asks {
+					price, ok := big.NewFloat(0).SetString(ask.Price)
 					if !ok {
-						s.logger.Fatal().Err(err).Msg("delete ask")
+						s.logger.Fatal().Err(err).Msg("parse ask price")
 					}
 
-					continue
+					if ask.Total == "" {
+						s.storage.Book.DeleteAsk(price.Text('f', s.pair.PricePrecision))
+
+						continue
+					}
+
+					s.storage.Book.AddAsk(price.Text('f', s.pair.PricePrecision), ask)
 				}
 
-				ok = s.storage.Book.AddAsk(price.Text('f', s.pair.PricePrecision), ask)
+				ok = s.storage.Book.UpdateMinAskPrice()
 				if !ok {
-					s.logger.Fatal().Err(err).Msg("delete bid")
+					s.logger.Fatal().Err(err).Msg("update min ask price error")
 				}
 			}
 
@@ -157,7 +161,7 @@ func (s *OrderBook) Start(ctx context.Context, interrupt chan os.Signal) error {
 
 			s.eventBroker.Publish(0)
 		case <-ctx.Done():
-			cli.Close()
+			interrupt <- syscall.SIGSTOP
 
 			return nil
 		}

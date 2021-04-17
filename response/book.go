@@ -70,7 +70,7 @@ type AccountingOrder struct {
 }
 
 type Deal struct {
-	Timestamp  int64  `json:"timestamp"`
+	Timestamp  string `json:"timestamp"`
 	OrderID    int64  `json:"orderId"`
 	Pair       string `json:"pair"`
 	Price      string `json:"price"`
