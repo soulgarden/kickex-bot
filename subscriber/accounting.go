@@ -55,15 +55,9 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal) error 
 				Bytes("payload", msg).
 				Msg("got message")
 
-			er := &response.Error{}
-
-			err = json.Unmarshal(msg, er)
+			err = s.checkErrorResponse(msg)
 			if err != nil {
-				s.logger.Fatal().Err(err).Bytes("msg", msg).Msg("unmarshall")
-			}
-
-			if er.Error != nil {
-				s.logger.Fatal().Bytes("response", msg).Err(err).Msg("received error")
+				return err
 			}
 
 			r := &response.AccountingUpdates{}
@@ -92,4 +86,23 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal) error 
 			return nil
 		}
 	}
+}
+
+func (s *Accounting) checkErrorResponse(msg []byte) error {
+	er := &response.Error{}
+
+	err := json.Unmarshal(msg, er)
+	if err != nil {
+		s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
+
+		return err
+	}
+
+	if er.Error != nil {
+		s.logger.Err(err).Bytes("response", msg).Msg("received error")
+
+		return err
+	}
+
+	return nil
 }

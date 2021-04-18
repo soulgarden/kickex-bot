@@ -41,6 +41,8 @@ var startCmd = &cobra.Command{
 
 		ctx, cancel := context.WithCancel(context.Background())
 
+		logger.Warn().Msg("starting...")
+
 		orderManager, err := subscriber.NewOrder(cfg, st, eventBroker, &logger)
 		if err != nil {
 			cancel()

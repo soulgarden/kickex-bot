@@ -19,8 +19,6 @@ type Bot struct {
 
 	Pairs map[string]*Pair `json:"pairs" required:"true"`
 
-	OrderSleepMS int `json:"order_sleep_ms" default:"50"`
-
 	Debug bool `json:"debug"`
 }
 
@@ -29,7 +27,6 @@ type Pair struct {
 	SpreadForStartBuy    string  `json:"spread_for_start_buy" required:"true"`
 	SpreadForStartSell   string  `json:"spread_for_start_sell" required:"true"`
 	SpreadForStopTrade   string  `json:"spread_for_stop_trade" required:"true"`
-	MaxCompletedOrders   int     `json:"max_completed_orders" required:"true"`
 	PricePrecision       int     `json:"price_precision" required:"true"`
 	OrderVolumePrecision int     `json:"order_volume_precision" required:"true"`
 	TotalBuyAmountInUSDT float64 `json:"total_buy_amount_in_usdt" required:"true"`
