@@ -1,20 +1,11 @@
 version: '3'
 
 services:
-  bot_kickusdt:
-    container_name: kickex_bot_kickusdt
-    image: soulgarden/kickex-bot:1.0.4
+  bot_demo:
+    container_name: kickex_bot_demo
+    image: soulgarden/kickex-bot:1.0.8
     environment:
       CFG_PATH: /conf.json
     stop_signal: SIGINT
     volumes:
-      - ./conf/conf.json:/conf.json
-
-  bot_kicketh:
-    container_name: kickex_bot_kicketh
-    image: soulgarden/kickex-bot:1.0.4
-    environment:
-      CFG_PATH: /conf.json
-    stop_signal: SIGINT
-    volumes:
-      - ./conf/conf.kicketh.json:/conf.json
+      - ./conf/conf.remote.demo.json:/conf.json

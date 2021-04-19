@@ -3,40 +3,14 @@
   "api_key_pass": "",
   "default_addr": "demo.gate.kickex.com",
   "scheme": "wss",
-  "pair": "KICK/USDT",
-  "max_completed_orders": 1,
-  "pairs": {
-    "KICK/USDT": {
-      "price_step": "0.0000001",
-      "spread_for_start_buy": "2.8",
-      "spread_for_start_sell": "2.8",
-      "spread_for_stop_trade": "1.4",
-      "max_completed_orders": 2,
-      "price_precision": 7,
-      "order_volume_precision": 0,
-      "total_buy_amount_in_usdt": 5
-    },
-    "BAL/USDT": {
-      "price_step": "0.0000001",
-      "spread_for_start_buy": "3",
-      "spread_for_start_sell": "3",
-      "spread_for_stop_trade": "0.8",
-      "max_completed_orders": 2,
-      "price_precision": 7,
-      "order_volume_precision": 0,
-      "total_buy_amount_in_usdt": 1.1
-    },
-    "COMP/USDT": {
-      "price_step": "0.0001",
-      "spread_for_start_buy": "3",
-      "spread_for_start_sell": "3",
-      "spread_for_stop_trade": "0.8",
-      "max_completed_orders": 2,
-      "price_precision": 4,
-      "order_volume_precision": 4,
-      "total_buy_amount_in_usdt": 1.5
-    }
-  },
-  "order_sleep_ms": 25,
+  "max_completed_orders": 1000,
+  "pairs": [
+    "KICK/USDT"
+  ],
+  "spread_for_start_buy": "3",
+  "spread_for_start_sell": "3",
+  "spread_for_stop_buy_trade": "1.5",
+  "spread_for_stop_sell_trade": "0.8",
+  "total_buy_volume_scale": "15",
   "debug": false
 }

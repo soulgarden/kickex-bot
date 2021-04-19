@@ -2,6 +2,7 @@ package client
 
 import (
 	"encoding/json"
+	"errors"
 	"net/url"
 	"os"
 	"strconv"
@@ -9,10 +10,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/soulgarden/kickex-bot/conf"
 	"github.com/soulgarden/kickex-bot/response"
 
 	"github.com/rs/zerolog"
+	"github.com/soulgarden/kickex-bot/conf"
 	"github.com/soulgarden/kickex-bot/dictionary"
 
 	"github.com/gorilla/websocket"
@@ -24,10 +25,11 @@ const pingInterval = 15 * time.Second
 const readChSize = 256
 const writeChSize = 1024
 const readDeadline = 20 * time.Second
-const eventSize = 8192
+const eventSize = 32768
 
 type Client struct {
 	id       int64
+	cfg      *conf.Bot
 	conn     *websocket.Conn
 	sendCh   chan Msg
 	ReadCh   chan []byte
@@ -40,26 +42,31 @@ type Msg struct {
 	Payload []byte
 }
 
-func (c *Client) read() {
+func (c *Client) read(interrupt chan os.Signal) {
 	for {
 		c.conn.SetReadLimit(eventSize)
 
 		err := c.conn.SetReadDeadline(time.Now().Add(readDeadline))
 		if err != nil {
 			c.logger.Err(err).Msg("set read deadline")
+
+			interrupt <- syscall.SIGSTOP
 		}
 
 		c.conn.SetPongHandler(func(string) error {
 			err = c.conn.SetReadDeadline(time.Now().Add(readDeadline))
 			if err != nil {
 				c.logger.Err(err).Msg("set read deadline")
+
+				interrupt <- syscall.SIGSTOP
 			}
 
 			return nil
 		})
 
-		_, sourceMessage, err := c.conn.ReadMessage()
+		msgType, sourceMessage, err := c.conn.ReadMessage()
 		c.logger.Debug().
+			Int("type", msgType).
 			Bytes("payload", sourceMessage).
 			Msg("got message")
 
@@ -70,9 +77,19 @@ func (c *Client) read() {
 				websocket.CloseNormalClosure,
 			) {
 				c.logger.Warn().Err(err).Msg("unexpected close error")
+
+				interrupt <- syscall.SIGSTOP
+			} else if !websocket.IsCloseError(
+				err,
+				websocket.CloseGoingAway,
+				websocket.CloseNormalClosure,
+			) {
+				c.logger.Err(err).Msg("got error")
+
+				interrupt <- syscall.SIGSTOP
 			}
 
-			break
+			return
 		}
 
 		if c.isClosed.IsNotSet() {
@@ -102,7 +119,10 @@ func (c *Client) write(interrupt chan os.Signal) {
 			}
 
 			if c.isClosed.IsNotSet() && msg.Type == websocket.PingMessage {
-				c.logger.Err(err).Interface("msg", msg).Msg("ping failed, interrupt")
+				c.logger.Err(err).
+					Int("type", msg.Type).
+					Bytes("body", msg.Payload).
+					Msg("ping failed, interrupt")
 				interrupt <- syscall.SIGSTOP
 			}
 		}
@@ -183,6 +203,17 @@ func (c *Client) GetOrderBookAndSubscribe(pairs string) error {
 	return c.sendMessage(body)
 }
 
+func (c *Client) GetPairsAndSubscribe() error {
+	atomic.AddInt64(&c.id, 1)
+
+	body := &request.GetPairsAndSubscribe{
+		ID:   strconv.FormatInt(c.id, 10),
+		Type: dictionary.GetPairsAndSubscribe,
+	}
+
+	return c.sendMessage(body)
+}
+
 func (c *Client) CreateOrder(pair, volume, limitPrice string, tradeIntent int) (int64, error) {
 	atomic.AddInt64(&c.id, 1)
 
@@ -241,19 +272,60 @@ func (c *Client) sendMessage(payload interface{}) error {
 		return err
 	}
 
-	c.logger.Debug().Bytes("body", body).Msg("send")
+	c.logger.Debug().Int("type", websocket.TextMessage).Bytes("body", body).Msg("send")
 
 	if c.isClosed.IsNotSet() {
 		c.sendCh <- Msg{Type: websocket.TextMessage, Payload: body}
 	} else {
-		c.logger.Warn().Interface("payload", payload).Msg("got message fot sent, but write channel closed")
+		c.logger.Warn().
+			Int("type", websocket.TextMessage).
+			Interface("body", payload).
+			Msg("got message fot sent, but write channel closed")
 	}
 
 	return nil
 }
 
-func newConnection(url string, logger *zerolog.Logger) (*Client, error) {
-	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+func (c *Client) Auth() error {
+	err := c.authorize(c.cfg.APIKey, c.cfg.APIKeyPass)
+	if err != nil {
+		c.logger.Err(err).Msg("authorization")
+
+		return nil
+	}
+
+	msg, ok := <-c.ReadCh
+	if !ok {
+		return dictionary.ErrWsReadChannelClosed
+	}
+
+	c.logger.Debug().
+		Bytes("body", msg).
+		Msg("got auth message")
+
+	er := &response.Error{}
+
+	err = json.Unmarshal(msg, er)
+	if err != nil {
+		c.logger.Err(err).Msg("unmarshall")
+
+		return err
+	}
+
+	if er.Error != nil {
+		c.logger.Err(err).Bytes("payload", msg).Msg("auth error")
+
+		return errors.New(er.Error.Reason)
+	}
+
+	return nil
+}
+
+func newConnection(cfg *conf.Bot, logger *zerolog.Logger) (*Client, error) {
+	conn, _, err := websocket.DefaultDialer.Dial(
+		(&url.URL{Scheme: cfg.Scheme, Host: cfg.DefaultAddr, Path: "/ws"}).String(),
+		nil,
+	)
 	if err != nil {
 		logger.Err(err).Msg("Dial error")
 
@@ -263,6 +335,7 @@ func newConnection(url string, logger *zerolog.Logger) (*Client, error) {
 	logger.Debug().Msg("New connection established")
 
 	cli := &Client{
+		cfg:      cfg,
 		conn:     conn,
 		sendCh:   make(chan Msg, writeChSize),
 		ReadCh:   make(chan []byte, readChSize),
@@ -275,7 +348,7 @@ func newConnection(url string, logger *zerolog.Logger) (*Client, error) {
 
 func NewWsCli(cfg *conf.Bot, interrupt chan os.Signal, logger *zerolog.Logger) (*Client, error) {
 	cli, err := newConnection(
-		(&url.URL{Scheme: cfg.Scheme, Host: cfg.DefaultAddr, Path: "/ws"}).String(),
+		cfg,
 		logger,
 	)
 	if err != nil {
@@ -284,36 +357,9 @@ func NewWsCli(cfg *conf.Bot, interrupt chan os.Signal, logger *zerolog.Logger) (
 		return nil, err
 	}
 
-	go cli.read()
+	go cli.read(interrupt)
 	go cli.write(interrupt)
 	go cli.pinger()
-
-	err = cli.authorize(cfg.APIKey, cfg.APIKeyPass)
-	if err != nil {
-		logger.Err(err).Msg("authorization")
-
-		return nil, err
-	}
-
-	msg, ok := <-cli.ReadCh
-	if !ok {
-		return nil, dictionary.ErrWsReadChannelClosed
-	}
-
-	logger.Debug().
-		Bytes("payload", msg).
-		Msg("got auth message")
-
-	er := &response.Error{}
-
-	err = json.Unmarshal(msg, er)
-	if err != nil {
-		logger.Fatal().Err(err).Msg("unmarshall")
-	}
-
-	if er.Error != nil {
-		logger.Fatal().Err(err).Bytes("payload", msg).Msg("auth error")
-	}
 
 	return cli, nil
 }

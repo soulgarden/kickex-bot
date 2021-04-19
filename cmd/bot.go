@@ -4,11 +4,12 @@ import (
 	"context"
 	"os"
 	"os/signal"
-	"syscall"
+	"sync"
 	"time"
 
+	"github.com/soulgarden/kickex-bot/dictionary"
+
 	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 	"github.com/soulgarden/kickex-bot/conf"
 	"github.com/soulgarden/kickex-bot/storage"
 	"github.com/soulgarden/kickex-bot/subscriber"
@@ -16,7 +17,7 @@ import (
 )
 
 const (
-	ShutDownDuration = time.Second * 5
+	ShutDownDuration = time.Second * 10
 )
 
 //nolint: gochecknoglobals
@@ -43,52 +44,64 @@ var startCmd = &cobra.Command{
 
 		logger.Warn().Msg("starting...")
 
-		orderManager, err := subscriber.NewOrder(cfg, st, eventBroker, &logger)
-		if err != nil {
-			cancel()
-			os.Exit(1)
-		}
-
-		orderBook, err := subscriber.NewOrderBook(cfg, st, eventBroker, &logger)
-		if err != nil {
-			cancel()
-			os.Exit(1)
-		}
-
 		accounting := subscriber.NewAccounting(cfg, st, eventBroker, &logger)
+		pairs := subscriber.NewPairs(cfg, st, &logger)
 
-		go eventBroker.Start(ctx)
+		go pairs.Start(ctx, interrupt)
 
-		go func() {
-			err := orderBook.Start(ctx, interrupt)
-			if err != nil {
-				interrupt <- syscall.SIGINT
+		time.Sleep(time.Second) // wait for pairs filling
+
+		go eventBroker.Start()
+		go accounting.Start(ctx, interrupt)
+
+		var wg sync.WaitGroup
+
+		for _, pairName := range cfg.Pairs {
+			pair := st.GetPair(pairName)
+			if pair == nil {
+				logger.Err(dictionary.ErrInvalidPair).Msg(dictionary.ErrInvalidPair.Error())
+
+				cancel()
+
+				break
 			}
 
-			log.Err(err).Msg("stop subscribe order book")
-		}()
-		go func() {
-			err := accounting.Start(ctx, interrupt)
+			st.RegisterOrderBook(pair)
+
+			go subscriber.NewOrderBook(cfg, st, eventBroker, pair, &logger).Start(ctx, interrupt)
+
+			orderManager, err := subscriber.NewOrder(cfg, st, eventBroker, pair, &logger)
 			if err != nil {
-				interrupt <- syscall.SIGINT
+				cancel()
+
+				break
 			}
 
-			log.Err(err).Msg("stop subscribe acc")
-		}()
+			wg.Add(1)
+			go orderManager.Start(ctx, &wg, interrupt)
+		}
+
 		go func() {
-			err := orderManager.Start(ctx, interrupt, st)
-			if err != nil {
-				interrupt <- syscall.SIGINT
+			for {
+				select {
+				case <-time.After(time.Minute):
+					logger.Info().Msg("run cleanup old orders")
+
+					st.CleanUpOldOrders()
+				case <-ctx.Done():
+					return
+				}
 			}
-			log.Err(err).Msg("stop order manager")
 		}()
 
-		<-interrupt
+		go func() {
+			<-interrupt
+
+			cancel()
+		}()
+
+		wg.Wait()
 
 		logger.Warn().Msg("shutting down...")
-
-		cancel()
-
-		<-time.After(ShutDownDuration)
 	},
 }

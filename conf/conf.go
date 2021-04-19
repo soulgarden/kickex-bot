@@ -14,22 +14,18 @@ type Bot struct {
 	DefaultAddr string `json:"default_addr" default:"demo.gate.kickex.com"`
 	Scheme      string `json:"scheme" default:"wss"`
 
-	Pair               string `json:"pair" default:"KICK/USDT"`
-	MaxCompletedOrders int64  `json:"max_completed_orders"`
+	MaxCompletedOrders int64 `json:"max_completed_orders"`
 
-	Pairs map[string]*Pair `json:"pairs" required:"true"`
+	Pairs []string `json:"pairs"`
+
+	SpreadForStartBuy      string `json:"spread_for_start_buy" required:"true"`
+	SpreadForStartSell     string `json:"spread_for_start_sell" required:"true"`
+	SpreadForStopBuyTrade  string `json:"spread_for_stop_buy_trade" required:"true"`
+	SpreadForStopSellTrade string `json:"spread_for_stop_sell_trade" required:"true"`
+
+	TotalBuyVolumeScale string `json:"total_buy_volume_scale" required:"true"`
 
 	Debug bool `json:"debug"`
-}
-
-type Pair struct {
-	PriceStep            string  `json:"price_step" required:"true"`
-	SpreadForStartBuy    string  `json:"spread_for_start_buy" required:"true"`
-	SpreadForStartSell   string  `json:"spread_for_start_sell" required:"true"`
-	SpreadForStopTrade   string  `json:"spread_for_stop_trade" required:"true"`
-	PricePrecision       int     `json:"price_precision" required:"true"`
-	OrderVolumePrecision int     `json:"order_volume_precision" required:"true"`
-	TotalBuyAmountInUSDT float64 `json:"total_buy_amount_in_usdt" required:"true"`
 }
 
 func New() *Bot {
@@ -42,10 +38,6 @@ func New() *Bot {
 
 	if err := configor.New(&configor.Config{ErrorOnUnmatchedKeys: true}).Load(c, path); err != nil {
 		log.Fatal().Err(err).Msg("conf validation errors")
-	}
-
-	if _, ok := c.Pairs[c.Pair]; !ok {
-		log.Fatal().Msg("pair is missing in pairs list")
 	}
 
 	return c

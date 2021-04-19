@@ -10,6 +10,10 @@ docker_up du:
 docker_down dd:
 	docker-compose down --timeout=10
 
+docker_logs dl:
+	docker-compose logs -f
+
 build:
-	docker build  . -f ./docker/bot/Dockerfile -t soulgarden/kickex-bot:1.0.4
-	docker push soulgarden/kickex-bot:1.0.4
+	docker build  . -f ./docker/bot/Dockerfile -t soulgarden/kickex-bot:1.0.8
+	docker push soulgarden/kickex-bot:1.0.8
+

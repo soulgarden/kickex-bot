@@ -1,7 +1,5 @@
 package subscriber
 
-import "context"
-
 const eventChSize = 1024
 
 type Broker struct {
@@ -20,15 +18,9 @@ func NewBroker() *Broker {
 	}
 }
 
-func (b *Broker) Start(ctx context.Context) {
+func (b *Broker) Start() {
 	for {
 		select {
-		case <-ctx.Done():
-			for msgCh := range b.subscribers {
-				close(msgCh)
-			}
-
-			return
 		case msgCh := <-b.subCh:
 			b.subscribers[msgCh] = struct{}{}
 		case msgCh := <-b.unsubCh:
