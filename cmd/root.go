@@ -13,6 +13,7 @@ var rootCmd = &cobra.Command{}
 
 func Execute() {
 	rootCmd.AddCommand(startCmd)
+	rootCmd.AddCommand(disbalanceCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		log.Err(err).Msg("command execution failed")

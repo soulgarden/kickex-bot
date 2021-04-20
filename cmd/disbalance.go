@@ -7,9 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/soulgarden/kickex-bot/service"
-
 	"github.com/soulgarden/kickex-bot/dictionary"
+	"github.com/soulgarden/kickex-bot/service"
 
 	"github.com/rs/zerolog"
 	"github.com/soulgarden/kickex-bot/conf"
@@ -18,15 +17,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const (
-	ShutDownDuration = time.Second * 10
-	cleanupInterval  = time.Minute * 10
-)
+const pairsWaitingDuration = 3 * time.Second
 
 //nolint: gochecknoglobals
-var startCmd = &cobra.Command{
-	Use:   "bot",
-	Short: "Start spread trade bot for kickex exchange ",
+var disbalanceCmd = &cobra.Command{
+	Use:   "disbalance",
+	Short: "Start bot for kickex exchange that search price disbalance in pairs",
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := conf.New()
@@ -58,6 +54,7 @@ var startCmd = &cobra.Command{
 		go accounting.Start(ctx, interrupt)
 
 		var wg sync.WaitGroup
+		dis := subscriber.NewDisbalance(cfg, st, eventBroker, service.NewConversion(st, &logger), &logger)
 
 		for _, pairName := range cfg.Pairs {
 			pair := st.GetPair(pairName)
@@ -75,37 +72,12 @@ var startCmd = &cobra.Command{
 			st.RegisterOrderBook(pair)
 
 			go subscriber.NewOrderBook(cfg, st, eventBroker, pair, &logger).Start(ctx, interrupt)
-
-			orderManager, err := subscriber.NewSpread(
-				cfg,
-				st,
-				eventBroker,
-				service.NewConversion(st, &logger),
-				pair,
-				&logger,
-			)
-			if err != nil {
-				cancel()
-
-				break
-			}
-
-			wg.Add(1)
-			go orderManager.Start(ctx, &wg, interrupt)
 		}
 
-		go func() {
-			for {
-				select {
-				case <-time.After(cleanupInterval):
-					logger.Info().Msg("run cleanup old orders")
+		time.Sleep(pairsWaitingDuration)
 
-					st.CleanUpOldOrders()
-				case <-ctx.Done():
-					return
-				}
-			}
-		}()
+		wg.Add(1)
+		go dis.Start(ctx, &wg, interrupt)
 
 		go func() {
 			<-interrupt

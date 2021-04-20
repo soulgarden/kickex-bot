@@ -96,7 +96,7 @@ func (s *OrderBook) Start(ctx context.Context, interrupt chan os.Signal) {
 
 			s.orderBook.LastPrice = r.LastPrice.Price
 
-			err = s.updateMaxBidPrice(r)
+			err = s.updateMaxBids(r)
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("update max bid price")
 
@@ -105,7 +105,7 @@ func (s *OrderBook) Start(ctx context.Context, interrupt chan os.Signal) {
 				return
 			}
 
-			err = s.updateMinAskPrice(r)
+			err = s.updateAsks(r)
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("update min ask price")
 
@@ -123,7 +123,7 @@ func (s *OrderBook) Start(ctx context.Context, interrupt chan os.Signal) {
 	}
 }
 
-func (s *OrderBook) updateMaxBidPrice(r *response.BookResponse) error {
+func (s *OrderBook) updateMaxBids(r *response.BookResponse) error {
 	if len(r.Bids) > 0 {
 		for _, bid := range r.Bids {
 			price, ok := big.NewFloat(0).SetString(bid.Price)
@@ -133,13 +133,20 @@ func (s *OrderBook) updateMaxBidPrice(r *response.BookResponse) error {
 				return dictionary.ErrParseFloat
 			}
 
+			priceStr := price.Text('f', s.pair.PriceScale)
+
 			if bid.Total == "" {
-				s.orderBook.DeleteBid(price.Text('f', s.pair.PriceScale))
+				s.orderBook.DeleteBid(priceStr)
 
 				continue
 			}
 
-			s.orderBook.AddBid(price.Text('f', s.pair.PriceScale), bid)
+			o, err := s.createBookOrderByResponseOrder(bid, price)
+			if err != nil {
+				return err
+			}
+
+			s.orderBook.AddBid(priceStr, o)
 		}
 
 		ok := s.orderBook.UpdateMaxBidPrice()
@@ -153,23 +160,33 @@ func (s *OrderBook) updateMaxBidPrice(r *response.BookResponse) error {
 	return nil
 }
 
-func (s *OrderBook) updateMinAskPrice(r *response.BookResponse) error {
+func (s *OrderBook) updateAsks(r *response.BookResponse) error {
 	if len(r.Asks) > 0 {
 		for _, ask := range r.Asks {
 			price, ok := big.NewFloat(0).SetString(ask.Price)
 			if !ok {
-				s.logger.Fatal().Err(dictionary.ErrParseFloat).Msg("parse ask price")
+				s.logger.
+					Err(dictionary.ErrParseFloat).
+					Str("val", ask.Price).
+					Msg("parse string as float")
 
 				return dictionary.ErrParseFloat
 			}
 
+			priceStr := price.Text('f', s.pair.PriceScale)
+
 			if ask.Total == "" {
-				s.orderBook.DeleteAsk(price.Text('f', s.pair.PriceScale))
+				s.orderBook.DeleteAsk(priceStr)
 
 				continue
 			}
 
-			s.orderBook.AddAsk(price.Text('f', s.pair.PriceScale), ask)
+			o, err := s.createBookOrderByResponseOrder(ask, price)
+			if err != nil {
+				return err
+			}
+
+			s.orderBook.AddAsk(priceStr, o)
 		}
 
 		ok := s.orderBook.UpdateMinAskPrice()
@@ -181,6 +198,41 @@ func (s *OrderBook) updateMinAskPrice(r *response.BookResponse) error {
 	}
 
 	return nil
+}
+
+func (s *OrderBook) createBookOrderByResponseOrder(o *response.Order, price *big.Float) (*storage.BookOrder, error) {
+	amount, ok := big.NewFloat(0).SetString(o.Amount)
+	if !ok {
+		s.logger.
+			Err(dictionary.ErrParseFloat).
+			Str("val", o.Amount).
+			Msg("parse string as float")
+
+		return nil, dictionary.ErrParseFloat
+	}
+
+	total, ok := big.NewFloat(0).SetString(o.Total)
+	if !ok {
+		s.logger.
+			Err(dictionary.ErrParseFloat).
+			Str("val", o.Amount).
+			Msg("parse string as float")
+
+		return nil, dictionary.ErrParseFloat
+	}
+
+	quotedToUSDTPrice, err := s.getQuotedToUSDTPrice()
+	if err != nil {
+		return nil, err
+	}
+
+	return &storage.BookOrder{
+		Price:     price,
+		USDTPrice: big.NewFloat(0).Mul(quotedToUSDTPrice, price),
+		Amount:    amount,
+		Total:     total,
+		USDTTotal: big.NewFloat(0).Mul(quotedToUSDTPrice, total),
+	}, nil
 }
 
 func (s *OrderBook) updateSpread() {
@@ -228,4 +280,28 @@ func (s *OrderBook) checkErrorResponse(msg []byte) error {
 	}
 
 	return nil
+}
+
+func (s *OrderBook) getQuotedToUSDTPrice() (*big.Float, error) {
+	var quotedToUSDTPrice *big.Float
+
+	var ok bool
+
+	if s.pair.QuoteCurrency == dictionary.USDT {
+		quotedToUSDTPrice = big.NewFloat(1)
+	} else {
+		p := s.storage.GetPair(s.pair.QuoteCurrency + "/" + dictionary.USDT)
+
+		quotedToUSDTPrice, ok = big.NewFloat(0).SetString(p.Price)
+		if !ok {
+			s.logger.
+				Err(dictionary.ErrParseFloat).
+				Str("val", p.Price).
+				Msg("parse string as float")
+
+			return nil, dictionary.ErrParseFloat
+		}
+	}
+
+	return quotedToUSDTPrice, nil
 }

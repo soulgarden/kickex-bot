@@ -40,8 +40,16 @@ type Book struct {
 	CompletedBuyOrders  int64
 	CompletedSellOrders int64
 
-	bids map[string]*response.Order
-	asks map[string]*response.Order
+	bids map[string]*BookOrder
+	asks map[string]*BookOrder
+}
+
+type BookOrder struct {
+	Price     *big.Float
+	USDTPrice *big.Float
+	Amount    *big.Float
+	Total     *big.Float
+	USDTTotal *big.Float
 }
 
 type Session struct {
@@ -87,8 +95,8 @@ func (s *Storage) RegisterOrderBook(pair *response.Pair) {
 			Session:             make(map[string]*Session),
 			CompletedBuyOrders:  0,
 			CompletedSellOrders: 0,
-			bids:                make(map[string]*response.Order),
-			asks:                make(map[string]*response.Order),
+			bids:                make(map[string]*BookOrder),
+			asks:                make(map[string]*BookOrder),
 		}
 	}
 }
@@ -248,14 +256,14 @@ func (b *Book) setMinAskPrice(minAskPrice *big.Float) {
 	b.minAskPrice = minAskPrice
 }
 
-func (b *Book) AddBid(price string, bid *response.Order) {
+func (b *Book) AddBid(price string, bid *BookOrder) {
 	b.mx.Lock()
 	defer b.mx.Unlock()
 
 	b.bids[price] = bid
 }
 
-func (b *Book) GetBid(price string) *response.Order {
+func (b *Book) GetBid(price string) *BookOrder {
 	b.mx.RLock()
 	defer b.mx.RUnlock()
 
@@ -274,14 +282,14 @@ func (b *Book) DeleteBid(price string) {
 	delete(b.bids, price)
 }
 
-func (b *Book) AddAsk(price string, ask *response.Order) {
+func (b *Book) AddAsk(price string, ask *BookOrder) {
 	b.mx.Lock()
 	defer b.mx.Unlock()
 
 	b.asks[price] = ask
 }
 
-func (b *Book) GetAsk(price string) *response.Order {
+func (b *Book) GetAsk(price string) *BookOrder {
 	b.mx.RLock()
 	defer b.mx.RUnlock()
 

@@ -11,6 +11,6 @@
   "spread_for_start_sell": "3",
   "spread_for_stop_buy_trade": "1.5",
   "spread_for_stop_sell_trade": "0.8",
-  "total_buy_volume_scale": "15",
+  "total_buy_in_usdt": "15",
   "debug": false
 }

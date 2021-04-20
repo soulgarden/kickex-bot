@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/soulgarden/kickex-bot/service"
+
 	"github.com/rs/zerolog"
 	"github.com/soulgarden/kickex-bot/client"
 	"github.com/soulgarden/kickex-bot/conf"
@@ -20,28 +22,31 @@ import (
 	"github.com/soulgarden/kickex-bot/storage"
 )
 
-type Order struct {
-	cfg                    *conf.Bot
-	pair                   *response.Pair
-	orderBook              *storage.Book
-	storage                *storage.Storage
-	eventBroker            *Broker
+type Spread struct {
+	cfg         *conf.Bot
+	pair        *response.Pair
+	orderBook   *storage.Book
+	storage     *storage.Storage
+	eventBroker *Broker
+	conversion  *service.Conversion
+
 	priceStep              *big.Float
 	spreadForStartBuy      *big.Float
 	spreadForStartSell     *big.Float
 	spreadForStopBuyTrade  *big.Float
 	spreadForStopSellTrade *big.Float
-	totalBuyVolume         *big.Float
-	logger                 *zerolog.Logger
+
+	logger *zerolog.Logger
 }
 
-func NewOrder(
+func NewSpread(
 	cfg *conf.Bot,
 	storage *storage.Storage,
 	eventBroker *Broker,
+	conversion *service.Conversion,
 	pair *response.Pair,
 	logger *zerolog.Logger,
-) (*Order, error) {
+) (*Spread, error) {
 	zeroStep := big.NewFloat(0).Text('f', pair.PriceScale)
 	priceStepStr := zeroStep[0:pair.PriceScale+1] + "1"
 
@@ -80,39 +85,23 @@ func NewOrder(
 		return nil, dictionary.ErrParseFloat
 	}
 
-	pairMinVolume, ok := big.NewFloat(0).SetString(pair.MinVolume)
-	if !ok {
-		logger.Err(dictionary.ErrParseFloat).Str("val", priceStepStr).Msg("parse string as float error")
-
-		return nil, dictionary.ErrParseFloat
-	}
-
-	totalBuyVolumeScale, ok := big.NewFloat(0).SetString(cfg.TotalBuyVolumeScale)
-	if !ok {
-		logger.Err(dictionary.ErrParseFloat).Str("val", priceStepStr).Msg("parse string as float error")
-
-		return nil, dictionary.ErrParseFloat
-	}
-
-	totalBuyVolume := big.NewFloat(0).Mul(pairMinVolume, totalBuyVolumeScale)
-
-	return &Order{
+	return &Spread{
 		cfg:                    cfg,
 		pair:                   pair,
 		storage:                storage,
 		eventBroker:            eventBroker,
+		conversion:             conversion,
 		priceStep:              priceStep,
 		spreadForStartBuy:      spreadForStartTrade,
 		spreadForStartSell:     spreadForStartSell,
 		spreadForStopBuyTrade:  spreadForStopBuyTrade,
 		spreadForStopSellTrade: spreadForStopSellTrade,
-		totalBuyVolume:         totalBuyVolume,
 		orderBook:              storage.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency],
 		logger:                 logger,
 	}, nil
 }
 
-func (s *Order) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan os.Signal) {
+func (s *Spread) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan os.Signal) {
 	defer func() {
 		wg.Done()
 	}()
@@ -159,7 +148,12 @@ func (s *Order) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan os
 	}
 }
 
-func (s *Order) processSession(ctx context.Context, cli *client.Client, sess *storage.Session, interrupt chan os.Signal) {
+func (s *Spread) processSession(
+	ctx context.Context,
+	cli *client.Client,
+	sess *storage.Session,
+	interrupt chan os.Signal,
+) {
 	go func() {
 		if err := s.listenNewOrders(ctx, interrupt, cli, sess); err != nil {
 			interrupt <- syscall.SIGSTOP
@@ -169,7 +163,7 @@ func (s *Order) processSession(ctx context.Context, cli *client.Client, sess *st
 	s.orderCreationDecider(ctx, cli, sess)
 }
 
-func (s *Order) orderCreationDecider(ctx context.Context, cli *client.Client, sess *storage.Session) {
+func (s *Spread) orderCreationDecider(ctx context.Context, cli *client.Client, sess *storage.Session) {
 	e := s.eventBroker.Subscribe()
 	defer s.eventBroker.Unsubscribe(e)
 
@@ -205,7 +199,7 @@ func (s *Order) orderCreationDecider(ctx context.Context, cli *client.Client, se
 	}
 }
 
-func (s *Order) listenNewOrders(
+func (s *Spread) listenNewOrders(
 	ctx context.Context,
 	interrupt chan os.Signal,
 	cli *client.Client,
@@ -254,7 +248,7 @@ func (s *Order) listenNewOrders(
 	}
 }
 
-func (s *Order) checkListenOrderErrors(msg []byte, attempts int, sess *storage.Session) (bool, int, error) {
+func (s *Spread) checkListenOrderErrors(msg []byte, attempts int, sess *storage.Session) (bool, int, error) {
 	er := &response.Error{}
 
 	err := json.Unmarshal(msg, er)
@@ -310,15 +304,15 @@ func (s *Order) checkListenOrderErrors(msg []byte, attempts int, sess *storage.S
 			}
 		}
 
-		s.logger.Err(err).Bytes("response", msg).Msg("received error")
+		s.logger.Err(errors.New(er.Error.Reason)).Bytes("response", msg).Msg("received error")
 
-		return false, attempts, nil
+		return false, attempts, errors.New(er.Error.Reason)
 	}
 
 	return false, 0, nil
 }
 
-func (s *Order) createBuyOrder(cli *client.Client, sess *storage.Session) {
+func (s *Spread) createBuyOrder(cli *client.Client, sess *storage.Session) {
 	atomic.StoreInt64(&sess.ActiveBuyOrderID, 1)
 
 	price := big.NewFloat(0).Add(s.orderBook.GetMaxBidPrice(), s.priceStep)
@@ -326,7 +320,13 @@ func (s *Order) createBuyOrder(cli *client.Client, sess *storage.Session) {
 	amount := big.NewFloat(0)
 
 	if atomic.LoadInt64(&sess.PrevBuyOrderID) == 0 {
-		total = s.totalBuyVolume
+		total, err := s.getTotalBuyVolume()
+		if err != nil {
+			s.logger.Fatal().
+				Err(err).
+				Msg("parse string as float")
+		}
+
 		amount.Quo(total, price)
 	} else {
 		prevBuyOrder := s.storage.GetUserOrder(atomic.LoadInt64(&sess.PrevBuyOrderID))
@@ -390,7 +390,7 @@ func (s *Order) createBuyOrder(cli *client.Client, sess *storage.Session) {
 	atomic.StoreInt64(&sess.ActiveBuyOrderID, extID)
 }
 
-func (s *Order) createSellOrder(cli *client.Client, sess *storage.Session) {
+func (s *Spread) createSellOrder(cli *client.Client, sess *storage.Session) {
 	price := big.NewFloat(0)
 	price.Sub(s.orderBook.GetMinAskPrice(), s.priceStep)
 
@@ -467,7 +467,7 @@ func (s *Order) createSellOrder(cli *client.Client, sess *storage.Session) {
 	atomic.StoreInt64(&sess.ActiveSellOrderID, extID)
 }
 
-func (s *Order) manageOrder(ctx context.Context, interrupt chan os.Signal, sess *storage.Session, orderID int64) {
+func (s *Spread) manageOrder(ctx context.Context, interrupt chan os.Signal, sess *storage.Session, orderID int64) {
 	s.logger.Warn().
 		Str("pair", s.pair.GetPairName()).
 		Int64("oid", orderID).
@@ -565,6 +565,17 @@ func (s *Order) manageOrder(ctx context.Context, interrupt chan os.Signal, sess 
 
 					err := s.cancelOrder(cli, orderID)
 					if err != nil {
+						if err.Error() == response.DoneOrder {
+							s.logger.Warn().
+								Str("pair", s.pair.GetPairName()).
+								Int64("oid", orderID).
+								Msg("expected cancelled state, but got done")
+
+							s.eventBroker.Publish(0)
+
+							continue
+						}
+
 						s.logger.Fatal().
 							Str("pair", s.pair.GetPairName()).
 							Int64("oid", orderID).
@@ -602,6 +613,17 @@ func (s *Order) manageOrder(ctx context.Context, interrupt chan os.Signal, sess 
 
 					err := s.cancelOrder(cli, orderID)
 					if err != nil {
+						if err.Error() == response.DoneOrder {
+							s.logger.Warn().
+								Str("pair", s.pair.GetPairName()).
+								Int64("oid", orderID).
+								Msg("expected cancelled state, but got done")
+
+							s.eventBroker.Publish(0)
+
+							continue
+						}
+
 						s.logger.Fatal().Int64("oid", orderID).Msg("cancel buy order for move")
 					}
 
@@ -627,7 +649,21 @@ func (s *Order) manageOrder(ctx context.Context, interrupt chan os.Signal, sess 
 
 					err := s.cancelOrder(cli, orderID)
 					if err != nil {
-						s.logger.Fatal().Int64("oid", orderID).Msg("can't cancel order")
+						if err.Error() == response.DoneOrder {
+							s.logger.Warn().
+								Str("pair", s.pair.GetPairName()).
+								Int64("oid", orderID).
+								Msg("expected cancelled state, but got done")
+
+							s.eventBroker.Publish(0)
+
+							continue
+						}
+
+						s.logger.Fatal().
+							Str("pair", s.pair.GetPairName()).
+							Int64("oid", orderID).
+							Msg("can't cancel order")
 					}
 
 					atomic.StoreInt64(&sess.PrevSellOrderID, orderID)
@@ -661,6 +697,17 @@ func (s *Order) manageOrder(ctx context.Context, interrupt chan os.Signal, sess 
 
 					err := s.cancelOrder(cli, orderID)
 					if err != nil {
+						if err.Error() == response.DoneOrder {
+							s.logger.Warn().
+								Str("pair", s.pair.GetPairName()).
+								Int64("oid", orderID).
+								Msg("expected cancelled state, but got done")
+
+							s.eventBroker.Publish(0)
+
+							continue
+						}
+
 						s.logger.Fatal().Int64("oid", orderID).Msg("can't cancel order")
 					}
 
@@ -679,7 +726,7 @@ func (s *Order) manageOrder(ctx context.Context, interrupt chan os.Signal, sess 
 	}
 }
 
-func (s *Order) calcBuySpread(activeBuyOrderID int64) *big.Float {
+func (s *Spread) calcBuySpread(activeBuyOrderID int64) *big.Float {
 	if o := s.storage.GetUserOrder(activeBuyOrderID); o == nil {
 		return dictionary.ZeroBigFloat
 	}
@@ -700,7 +747,7 @@ func (s *Order) calcBuySpread(activeBuyOrderID int64) *big.Float {
 	)
 }
 
-func (s *Order) cancelOrder(cli *client.Client, orderID int64) error {
+func (s *Spread) cancelOrder(cli *client.Client, orderID int64) error {
 	err := cli.CancelOrder(orderID)
 	if err != nil {
 		s.logger.Fatal().Int64("oid", orderID).Msg("cancel order")
@@ -735,14 +782,14 @@ func (s *Order) cancelOrder(cli *client.Client, orderID int64) error {
 	return nil
 }
 
-func (s *Order) setBuyOrderExecutedFlags(sess *storage.Session, activeBuyOrderID int64) {
+func (s *Spread) setBuyOrderExecutedFlags(sess *storage.Session, activeBuyOrderID int64) {
 	atomic.AddInt64(&s.orderBook.CompletedBuyOrders, 1)
 	atomic.StoreInt64(&sess.ActiveBuyOrderID, activeBuyOrderID)
 	atomic.StoreInt64(&sess.PrevBuyOrderID, 0)
 	atomic.StoreInt64(&sess.ActiveSellOrderID, 1) // need to create new sell order
 }
 
-func (s *Order) setSellOrderExecutedFlags(sess *storage.Session) {
+func (s *Spread) setSellOrderExecutedFlags(sess *storage.Session) {
 	atomic.AddInt64(&s.orderBook.CompletedSellOrders, 1)
 	// atomic.StoreInt64(&sess.ActiveBuyOrderID, 0) // need to create new buy order
 	atomic.StoreInt64(&sess.PrevSellOrderID, 0)
@@ -751,7 +798,7 @@ func (s *Order) setSellOrderExecutedFlags(sess *storage.Session) {
 	sess.IsDone.Set()
 }
 
-func (s *Order) cleanUpActiveOrders(cli *client.Client) {
+func (s *Spread) cleanUpActiveOrders(cli *client.Client) {
 	for _, sess := range s.orderBook.Session {
 		// cleanup orders
 		if atomic.LoadInt64(&sess.ActiveBuyOrderID) > 1 {
@@ -769,4 +816,22 @@ func (s *Order) cleanUpActiveOrders(cli *client.Client) {
 			}
 		}
 	}
+}
+
+func (s *Spread) getTotalBuyVolume() (*big.Float, error) {
+	totalBuyInUSDT, ok := big.NewFloat(0).SetString(s.cfg.TotalBuyInUSDT)
+	if !ok {
+		s.logger.Err(dictionary.ErrParseFloat).Str("val", s.cfg.TotalBuyInUSDT).Msg("parse string as float error")
+
+		return nil, dictionary.ErrParseFloat
+	}
+
+	quotedToUSDTPrices, err := s.conversion.GetUSDTPrice(s.pair.QuoteCurrency)
+	if err != nil {
+		return nil, err
+	}
+
+	totalBuyVolumeInQuoted := big.NewFloat(0).Quo(totalBuyInUSDT, quotedToUSDTPrices)
+
+	return totalBuyVolumeInQuoted, nil
 }

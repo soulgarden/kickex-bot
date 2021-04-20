@@ -23,7 +23,7 @@ type Bot struct {
 	SpreadForStopBuyTrade  string `json:"spread_for_stop_buy_trade" required:"true"`
 	SpreadForStopSellTrade string `json:"spread_for_stop_sell_trade" required:"true"`
 
-	TotalBuyVolumeScale string `json:"total_buy_volume_scale" required:"true"`
+	TotalBuyInUSDT string `json:"total_buy_in_usdt" required:"true"`
 
 	Debug bool `json:"debug"`
 }
