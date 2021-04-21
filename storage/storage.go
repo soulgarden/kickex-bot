@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"encoding/json"
+	"io/ioutil"
 	"math/big"
 	"sort"
 	"strconv"
@@ -24,7 +26,7 @@ type Storage struct {
 	Deals        []*response.Deal
 
 	orderBooksMx sync.RWMutex
-	OrderBooks   map[string]map[string]*Book // base/quoted
+	OrderBooks   map[string]map[string]*Book `json:"order_books"` // base/quoted
 }
 
 type Book struct {
@@ -35,7 +37,7 @@ type Book struct {
 	LastPrice   string
 	Spread      *big.Float
 
-	Session map[string]*Session
+	Sessions map[string]*Session `json:"session"`
 
 	CompletedBuyOrders  int64
 	CompletedSellOrders int64
@@ -53,17 +55,17 @@ type BookOrder struct {
 }
 
 type Session struct {
-	ID               string
-	ActiveBuyOrderID int64
-	PrevBuyOrderID   int64
+	ID               string `json:"id"`
+	ActiveBuyOrderID int64  `json:"active_buy_order_id"`
+	PrevBuyOrderID   int64  `json:"prev_buy_order_id"`
 
-	ActiveSellOrderID int64
-	PrevSellOrderID   int64
+	ActiveSellOrderID int64 `json:"active_sell_order_id"`
+	PrevSellOrderID   int64 `json:"prev_sell_order_id"`
 
-	BuyOrders  map[int64]int64
-	SellOrders map[int64]int64
+	BuyOrders  map[int64]int64 `json:"buy_orders"`
+	SellOrders map[int64]int64 `json:"sell_orders"`
 
-	IsDone *abool.AtomicBool
+	IsDone *abool.AtomicBool `json:"is_done"`
 }
 
 func NewStorage() *Storage {
@@ -92,12 +94,20 @@ func (s *Storage) RegisterOrderBook(pair *response.Pair) {
 			minAskPrice:         &big.Float{},
 			LastPrice:           "",
 			Spread:              &big.Float{},
-			Session:             make(map[string]*Session),
+			Sessions:            make(map[string]*Session),
 			CompletedBuyOrders:  0,
 			CompletedSellOrders: 0,
 			bids:                make(map[string]*BookOrder),
 			asks:                make(map[string]*BookOrder),
 		}
+	} else { // loaded from dump
+		book := s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency]
+		book.mx = sync.RWMutex{}
+		book.maxBidPrice = &big.Float{}
+		book.minAskPrice = &big.Float{}
+		book.Spread = &big.Float{}
+		book.bids = make(map[string]*BookOrder)
+		book.asks = make(map[string]*BookOrder)
 	}
 }
 
@@ -157,7 +167,7 @@ func (b *Book) NewSession() *Session {
 		IsDone:            abool.New(),
 	}
 
-	b.Session[id] = session
+	b.Sessions[id] = session
 
 	return session
 }
@@ -166,14 +176,14 @@ func (s *Storage) AddBuyOrder(pair *response.Pair, sid string, oid int64) {
 	s.orderBooksMx.Lock()
 	defer s.orderBooksMx.Unlock()
 
-	s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency].Session[sid].BuyOrders[oid] = oid
+	s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency].Sessions[sid].BuyOrders[oid] = oid
 }
 
 func (s *Storage) AddSellOrder(pair *response.Pair, sid string, oid int64) {
 	s.orderBooksMx.Lock()
 	defer s.orderBooksMx.Unlock()
 
-	s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency].Session[sid].SellOrders[oid] = oid
+	s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency].Sessions[sid].SellOrders[oid] = oid
 }
 
 func (s *Storage) GetTotalBuyVolume(pair *response.Pair, sid string) (*big.Float, bool) {
@@ -182,7 +192,7 @@ func (s *Storage) GetTotalBuyVolume(pair *response.Pair, sid string) (*big.Float
 
 	total := big.NewFloat(0)
 
-	for _, oid := range s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency].Session[sid].BuyOrders {
+	for _, oid := range s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency].Sessions[sid].BuyOrders {
 		if s.UserOrders[oid].TotalBuyVolume == "" {
 			continue
 		}
@@ -204,7 +214,7 @@ func (s *Storage) GetTotalSellVolume(pair *response.Pair, sid string) (*big.Floa
 
 	total := big.NewFloat(0)
 
-	for _, oid := range s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency].Session[sid].BuyOrders {
+	for _, oid := range s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency].Sessions[sid].BuyOrders {
 		if s.UserOrders[oid].TotalSellVolume == "" {
 			continue
 		}
@@ -377,7 +387,7 @@ func (b *Book) UpdateMinAskPrice() bool {
 func (s *Storage) CleanUpOldOrders() {
 	for _, baseCurrency := range s.OrderBooks {
 		for _, book := range baseCurrency {
-			for _, sess := range book.Session {
+			for _, sess := range book.Sessions {
 				if sess.IsDone.IsNotSet() {
 					continue
 				}
@@ -390,8 +400,33 @@ func (s *Storage) CleanUpOldOrders() {
 					delete(s.UserOrders, id)
 				}
 
-				delete(book.Session, sess.ID)
+				delete(book.Sessions, sess.ID)
 			}
 		}
 	}
+}
+
+func (s *Storage) DumpSessions(path string) error {
+	marshalled, err := json.Marshal(s)
+	if err != nil {
+		return err
+	}
+
+	err = ioutil.WriteFile(path, marshalled, 0644)
+
+	return err
+}
+
+func (s *Storage) LoadSessions(path string) error {
+	data, err := ioutil.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	err = json.Unmarshal(data, s)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

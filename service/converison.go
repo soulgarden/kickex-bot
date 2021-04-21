@@ -49,7 +49,7 @@ func (s *Conversion) GetUSDTPrice(currency string) (*big.Float, error) {
 func (s *Conversion) GetTotalBuyVolume(usdtAmount, currency string) (*big.Float, error) {
 	totalBuyInUSDT, ok := big.NewFloat(0).SetString(usdtAmount)
 	if !ok {
-		s.logger.Err(dictionary.ErrParseFloat).Str("val", usdtAmount).Msg("parse string as float error")
+		s.logger.Err(dictionary.ErrParseFloat).Str("val", usdtAmount).Msg("parse string as float")
 
 		return nil, dictionary.ErrParseFloat
 	}

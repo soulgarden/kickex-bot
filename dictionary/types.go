@@ -8,4 +8,5 @@ const (
 	GetPairsAndSubscribe     = "getPairsAndSubscribe"
 	CreateTradeOrder         = "createTradeOrder"
 	CancelOrder              = "cancelOrder"
+	GetOrder                 = "getOrder"
 )

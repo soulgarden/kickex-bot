@@ -25,6 +25,14 @@ type Bot struct {
 
 	TotalBuyInUSDT string `json:"total_buy_in_usdt" required:"true"`
 
+	Telegram struct {
+		Token  string `json:"token"`
+		ChatID int64  `json:"chat_id"`
+	} `json:"telegram"`
+
+	Env             string `json:"env"`
+	StorageDumpPath string `json:"storage_dump_path" default:"./storage/%s.spread.state.json"`
+
 	Debug bool `json:"debug"`
 }
 

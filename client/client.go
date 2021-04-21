@@ -266,6 +266,18 @@ func (c *Client) CancelOrder(orderID int64) error {
 	return c.sendMessage(body)
 }
 
+func (c *Client) GetOrder(orderID int64) error {
+	atomic.AddInt64(&c.id, 1)
+
+	body := &request.GetOrder{
+		ID:      strconv.FormatInt(c.id, 10),
+		Type:    dictionary.GetOrder,
+		OrderID: orderID,
+	}
+
+	return c.sendMessage(body)
+}
+
 func (c *Client) sendMessage(payload interface{}) error {
 	body, err := json.Marshal(payload)
 	if err != nil {

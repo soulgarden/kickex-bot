@@ -2,9 +2,12 @@ package subscriber
 
 import (
 	"context"
+	"fmt"
 	"math/big"
 	"os"
 	"sync"
+
+	"github.com/tevino/abool"
 
 	"github.com/rs/zerolog"
 	"github.com/soulgarden/kickex-bot/conf"
@@ -18,6 +21,7 @@ type Disbalance struct {
 	storage     *storage.Storage
 	eventBroker *Broker
 	conversion  *service.Conversion
+	tgSvc       *service.Telegram
 	logger      *zerolog.Logger
 }
 
@@ -26,9 +30,17 @@ func NewDisbalance(
 	storage *storage.Storage,
 	eventBroker *Broker,
 	conversion *service.Conversion,
+	tgSvc *service.Telegram,
 	logger *zerolog.Logger,
 ) *Disbalance {
-	return &Disbalance{cfg: cfg, storage: storage, eventBroker: eventBroker, conversion: conversion, logger: logger}
+	return &Disbalance{
+		cfg:         cfg,
+		storage:     storage,
+		eventBroker: eventBroker,
+		conversion:  conversion,
+		tgSvc:       tgSvc,
+		logger:      logger,
+	}
 }
 
 func (s *Disbalance) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan os.Signal) {
@@ -46,10 +58,10 @@ func (s *Disbalance) Start(ctx context.Context, wg *sync.WaitGroup, interrupt ch
 		s.eventBroker.Unsubscribe(e)
 	}()
 
+	sent := abool.New()
+
 	for {
 		select {
-		case <-e:
-
 		case <-e:
 			for baseCurrency, quotedCurrencies := range s.storage.OrderBooks {
 				var quotePrice *big.Float
@@ -111,6 +123,17 @@ func (s *Disbalance) Start(ctx context.Context, wg *sync.WaitGroup, interrupt ch
 						Str("ask pair", minAskPair).
 						Str("ask price", minAskPrice.Text('f', 10)).
 						Msg("bid price larger than ask price")
+
+					if sent.IsNotSet() {
+						sent.Set()
+						s.tgSvc.Send(
+							fmt.Sprintf(
+								`env: %s, bid price larger than ask price, bid pair %s, ask pair %s`,
+								s.cfg.Env,
+								maxBidPair,
+								maxBidPair,
+							))
+					}
 				}
 			}
 		case <-ctx.Done():

@@ -9,4 +9,5 @@ require (
 	github.com/satori/go.uuid v1.2.0
 	github.com/spf13/cobra v1.1.3
 	github.com/tevino/abool v1.2.0
+	gopkg.in/tucnak/telebot.v2 v2.3.5
 )

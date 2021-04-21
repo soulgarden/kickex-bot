@@ -10,7 +10,13 @@
   "spread_for_start_buy": "3",
   "spread_for_start_sell": "3",
   "spread_for_stop_buy_trade": "1.5",
-  "spread_for_stop_sell_trade": "0.8",
+  "spread_for_stop_sell_trade": "0.6",
   "total_buy_in_usdt": "15",
+  "telegram": {
+    "token": "",
+    "chat_id": 0
+  },
+  "env": "demo",
+  "storage_dump_path": "./storage/%s.spread.state.json",
   "debug": false
 }

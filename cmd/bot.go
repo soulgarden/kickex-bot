@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"sync"
@@ -39,11 +40,32 @@ var startCmd = &cobra.Command{
 		logger := zerolog.New(os.Stdout).Level(defaultLogLevel).With().Caller().Logger()
 		eventBroker := subscriber.NewBroker()
 		st := storage.NewStorage()
+		orderSvc := service.NewOrder(cfg, st, &logger)
 
 		interrupt := make(chan os.Signal, 1)
 		signal.Notify(interrupt, os.Interrupt)
 
 		ctx, cancel := context.WithCancel(context.Background())
+
+		_, err := os.Stat(fmt.Sprintf(cfg.StorageDumpPath, cfg.Env))
+		if err == nil {
+			err = st.LoadSessions(fmt.Sprintf(cfg.StorageDumpPath, cfg.Env))
+			if err != nil {
+				logger.Fatal().Err(err).Msg("load sessions from dump")
+			}
+
+			logger.Warn().Msg("load sessions from dump file")
+
+			if len(st.UserOrders) > 0 {
+				err = orderSvc.UpdateOrderStates(ctx, interrupt)
+				if err != nil {
+					logger.Fatal().Err(err).Msg("update orders for dumped state")
+				}
+			}
+
+		} else if !os.IsNotExist(err) {
+			logger.Fatal().Err(err).Msg("open dump file")
+		}
 
 		logger.Warn().Msg("starting...")
 
@@ -54,6 +76,18 @@ var startCmd = &cobra.Command{
 
 		time.Sleep(pairsWaitingDuration) // wait for pairs filling
 
+		tgSvc, err := service.NewTelegram(cfg, &logger)
+		if err != nil {
+			logger.Err(err).Msg("new tg")
+
+			cancel()
+
+			return
+		}
+
+		tgSvc.Send(fmt.Sprintf("env: %s, spread trading bot starting", cfg.Env))
+
+		go tgSvc.Start()
 		go eventBroker.Start()
 		go accounting.Start(ctx, interrupt)
 
@@ -81,6 +115,7 @@ var startCmd = &cobra.Command{
 				st,
 				eventBroker,
 				service.NewConversion(st, &logger),
+				tgSvc,
 				pair,
 				&logger,
 			)
@@ -110,6 +145,8 @@ var startCmd = &cobra.Command{
 		go func() {
 			<-interrupt
 
+			tgSvc.SendSync(fmt.Sprintf("env: %s, spread trading bot shutting down", cfg.Env))
+
 			cancel()
 
 			<-time.After(ShutDownDuration)
@@ -118,6 +155,9 @@ var startCmd = &cobra.Command{
 		}()
 
 		wg.Wait()
+
+		err = st.DumpSessions(fmt.Sprintf(cfg.StorageDumpPath, cfg.Env))
+		logger.Err(err).Msg("dump sessions to file")
 
 		logger.Warn().Msg("shutting down...")
 	},

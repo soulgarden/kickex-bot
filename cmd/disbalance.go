@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"sync"
@@ -50,11 +51,23 @@ var disbalanceCmd = &cobra.Command{
 
 		time.Sleep(pairsWaitingDuration) // wait for pairs filling
 
+		tgSvc, err := service.NewTelegram(cfg, &logger)
+		if err != nil {
+			logger.Err(err).Msg("new tg")
+
+			cancel()
+
+			return
+		}
+
+		tgSvc.Send(fmt.Sprintf("env: %s, disbalance bot starting", cfg.Env))
+
+		go tgSvc.Start()
 		go eventBroker.Start()
 		go accounting.Start(ctx, interrupt)
 
 		var wg sync.WaitGroup
-		dis := subscriber.NewDisbalance(cfg, st, eventBroker, service.NewConversion(st, &logger), &logger)
+		dis := subscriber.NewDisbalance(cfg, st, eventBroker, service.NewConversion(st, &logger), tgSvc, &logger)
 
 		for _, pairName := range cfg.Pairs {
 			pair := st.GetPair(pairName)
@@ -81,6 +94,8 @@ var disbalanceCmd = &cobra.Command{
 
 		go func() {
 			<-interrupt
+
+			tgSvc.SendSync(fmt.Sprintf("env: %s, disbalance bot shutting down", cfg.Env))
 
 			cancel()
 

@@ -12,5 +12,5 @@ type Err struct {
 
 const DoneOrder = "unable to cancel DONE order"
 const CancelledOrder = "unable to cancel CANCELLED order"
-const AmountTooSmall = "total volume must be >= 1"
+const AmountTooSmallCode = 20006
 const InsufficientFundsCode = 20005 // total volume must be >= 1
