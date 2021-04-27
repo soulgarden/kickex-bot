@@ -7,6 +7,12 @@
   "pairs": [
     "KICK/USDT"
   ],
+  "tracking_pairs": [
+    "KICK/BTC",
+    "KICK/USDT",
+    "KICK/ETH",
+    "KICK/TRX"
+  ],
   "spread_for_start_buy": "3",
   "spread_for_start_sell": "3",
   "spread_for_stop_buy_trade": "1.5",

@@ -214,7 +214,7 @@ func (s *Storage) GetTotalSellVolume(pair *response.Pair, sid string) (*big.Floa
 
 	total := big.NewFloat(0)
 
-	for _, oid := range s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency].Sessions[sid].BuyOrders {
+	for _, oid := range s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency].Sessions[sid].SellOrders {
 		if s.UserOrders[oid].TotalSellVolume == "" {
 			continue
 		}

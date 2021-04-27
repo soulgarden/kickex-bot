@@ -315,7 +315,7 @@ func (s *Spread) checkListenOrderErrors(msg []byte, attempts int, sess *storage.
 					Int64("oid", atomic.LoadInt64(&sess.ActiveBuyOrderID)).
 					Msg("consider prev buy order as executed, allow to place sell order")
 
-				s.setBuyOrderExecutedFlags(sess, atomic.LoadInt64(&sess.PrevBuyOrderID))
+				s.setBuyOrderExecutedFlags(sess, s.storage.UserOrders[id])
 			} else if id == atomic.LoadInt64(&sess.ActiveSellOrderID) {
 				s.logger.Warn().
 					Str("pair", s.pair.GetPairName()).
@@ -323,7 +323,7 @@ func (s *Spread) checkListenOrderErrors(msg []byte, attempts int, sess *storage.
 					Int64("oid", atomic.LoadInt64(&sess.ActiveSellOrderID)).
 					Msg("consider prev sell order as executed, allow to place buy order")
 
-				s.setSellOrderExecutedFlags(sess)
+				s.setSellOrderExecutedFlags(sess, s.storage.UserOrders[id])
 			}
 
 			return true, attempts, nil
@@ -569,15 +569,7 @@ func (s *Spread) manageOrder(ctx context.Context, interrupt chan os.Signal, sess
 						Msg("buy order reached final state")
 
 					if order.State == dictionary.StateDone {
-						s.setBuyOrderExecutedFlags(sess, atomic.LoadInt64(&sess.ActiveBuyOrderID))
-						s.tgSvc.Send(fmt.Sprintf(
-							`env: %s, buy order reached done state, pair: %s, id:%d, price: %s, volume: %s`,
-							s.cfg.Env,
-							s.pair.GetPairName(),
-							order.ID,
-							order.LimitPrice,
-							order.TotalBuyVolume,
-						))
+						s.setBuyOrderExecutedFlags(sess, order)
 					} else if order.State == dictionary.StateCancelled || order.State == dictionary.StateRejected {
 						atomic.StoreInt64(&sess.ActiveBuyOrderID, 0) // need to create new buy order
 						atomic.StoreInt64(&sess.PrevBuyOrderID, orderID)
@@ -589,15 +581,7 @@ func (s *Spread) manageOrder(ctx context.Context, interrupt chan os.Signal, sess
 						Msg("sell order reached final state")
 
 					if order.State == dictionary.StateDone {
-						s.setSellOrderExecutedFlags(sess)
-						s.tgSvc.Send(fmt.Sprintf(
-							`env: %s, sell order reached done state, pair: %s, id:%d, price: %s, volume: %s`,
-							s.cfg.Env,
-							s.pair.GetPairName(),
-							order.ID,
-							order.LimitPrice,
-							order.TotalSellVolume,
-						))
+						s.setSellOrderExecutedFlags(sess, order)
 					} else if order.State == dictionary.StateCancelled || order.State == dictionary.StateRejected {
 						atomic.StoreInt64(&sess.ActiveSellOrderID, 1) // need to create new sell order
 					}
@@ -850,20 +834,57 @@ func (s *Spread) cancelOrder(cli *client.Client, orderID int64) error {
 	return nil
 }
 
-func (s *Spread) setBuyOrderExecutedFlags(sess *storage.Session, activeBuyOrderID int64) {
+func (s *Spread) setBuyOrderExecutedFlags(sess *storage.Session, order *response.AccountingOrder) {
 	atomic.AddInt64(&s.orderBook.CompletedBuyOrders, 1)
-	atomic.StoreInt64(&sess.ActiveBuyOrderID, activeBuyOrderID)
+	atomic.StoreInt64(&sess.ActiveBuyOrderID, order.ID)
 	atomic.StoreInt64(&sess.PrevBuyOrderID, 0)
 	atomic.StoreInt64(&sess.ActiveSellOrderID, 1) // need to create new sell order
+
+	totalBoughtVolume, ok := s.storage.GetTotalBuyVolume(s.pair, sess.ID)
+	if !ok {
+		s.logger.Warn().Msg("parse string as float")
+	}
+
+	s.tgSvc.Send(fmt.Sprintf(
+		`env: %s,
+buy order reached done state,
+pair: %s,
+id: %d,
+price: %s,
+volume: %s`,
+		s.cfg.Env,
+		s.pair.GetPairName(),
+		order.ID,
+		order.LimitPrice,
+		totalBoughtVolume.Text('f', s.pair.PriceScale),
+	))
 }
 
-func (s *Spread) setSellOrderExecutedFlags(sess *storage.Session) {
+func (s *Spread) setSellOrderExecutedFlags(sess *storage.Session, order *response.AccountingOrder) {
 	atomic.AddInt64(&s.orderBook.CompletedSellOrders, 1)
-	// atomic.StoreInt64(&sess.ActiveBuyOrderID, 0) // need to create new buy order
 	atomic.StoreInt64(&sess.PrevSellOrderID, 0)
 	atomic.StoreInt64(&sess.ActiveSellOrderID, 0)
 
 	sess.IsDone.Set()
+
+	totalSoldVolume, ok := s.storage.GetTotalSellVolume(s.pair, sess.ID)
+	if !ok {
+		s.logger.Warn().Msg("parse string as float")
+	}
+
+	s.tgSvc.Send(fmt.Sprintf(
+		`env: %s,
+sell order reached done state,
+pair: %s,
+id: %d,
+price: %s,
+volume: %s`,
+		s.cfg.Env,
+		s.pair.GetPairName(),
+		order.ID,
+		order.LimitPrice,
+		totalSoldVolume.Text('f', s.pair.PriceScale),
+	))
 }
 
 func (s *Spread) cleanUpActiveOrders(cli *client.Client) {

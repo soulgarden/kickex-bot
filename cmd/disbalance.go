@@ -18,7 +18,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const pairsWaitingDuration = 3 * time.Second
+const pairsWaitingDuration = 5 * time.Second
 
 //nolint: gochecknoglobals
 var disbalanceCmd = &cobra.Command{
@@ -69,7 +69,7 @@ var disbalanceCmd = &cobra.Command{
 		var wg sync.WaitGroup
 		dis := subscriber.NewDisbalance(cfg, st, eventBroker, service.NewConversion(st, &logger), tgSvc, &logger)
 
-		for _, pairName := range cfg.Pairs {
+		for _, pairName := range cfg.TrackingPairs {
 			pair := st.GetPair(pairName)
 			if pair == nil {
 				logger.

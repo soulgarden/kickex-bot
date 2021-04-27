@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"syscall"
 
@@ -61,9 +62,16 @@ func (s *Order) UpdateOrderStates(ctx context.Context, interrupt chan os.Signal)
 				return err
 			}
 
-			r := &response.GetOrder{}
-			err := json.Unmarshal(msg, r)
+			err := s.checkErrorResponse(msg)
+			if err != nil {
+				interrupt <- syscall.SIGSTOP
 
+				return err
+			}
+
+			r := &response.GetOrder{}
+
+			err = json.Unmarshal(msg, r)
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 				interrupt <- syscall.SIGSTOP
@@ -71,8 +79,10 @@ func (s *Order) UpdateOrderStates(ctx context.Context, interrupt chan os.Signal)
 				return err
 			}
 
-			s.storage.SetUserOrder(r.Order)
-			s.logger.Warn().Int64("oid", r.Order.ID).Msg("order state updated")
+			if r.Order != nil {
+				s.storage.SetUserOrder(r.Order)
+				s.logger.Warn().Int64("oid", r.Order.ID).Msg("order state updated")
+			}
 
 			oNumberProcessed++
 
@@ -84,4 +94,29 @@ func (s *Order) UpdateOrderStates(ctx context.Context, interrupt chan os.Signal)
 			return nil
 		}
 	}
+}
+
+func (s *Order) checkErrorResponse(msg []byte) error {
+	er := &response.Error{}
+
+	err := json.Unmarshal(msg, er)
+	if err != nil {
+		s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
+
+		return err
+	}
+
+	if er.Error != nil {
+		if er.Error.Code == response.OrderNotFoundOrOutdated {
+			s.logger.Warn().Bytes("response", msg).Msg("received order not found")
+
+			return nil
+		}
+
+		s.logger.Err(err).Bytes("response", msg).Msg("received error")
+
+		return errors.New(er.Error.Reason)
+	}
+
+	return nil
 }

@@ -14,6 +14,6 @@ docker_logs dl:
 	docker-compose logs -f
 
 build:
-	docker build  . -f ./docker/bot/Dockerfile -t soulgarden/kickex-bot:1.0.23
-	docker push soulgarden/kickex-bot:1.0.23
+	docker build  . -f ./docker/bot/Dockerfile -t soulgarden/kickex-bot:1.0.25
+	docker push soulgarden/kickex-bot:1.0.25
 

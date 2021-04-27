@@ -8,19 +8,20 @@ import (
 )
 
 type Bot struct {
-	APIKey     string `json:"api_key"      required:"true"`
-	APIKeyPass string `json:"api_key_pass"      required:"true"`
+	APIKey     string `json:"api_key"       required:"true"`
+	APIKeyPass string `json:"api_key_pass"  required:"true"`
 
 	DefaultAddr string `json:"default_addr" default:"demo.gate.kickex.com"`
-	Scheme      string `json:"scheme" default:"wss"`
+	Scheme      string `json:"scheme"       default:"wss"`
 
 	MaxCompletedOrders int64 `json:"max_completed_orders"`
 
-	Pairs []string `json:"pairs"`
+	Pairs         []string `json:"pairs"          required:"true"`
+	TrackingPairs []string `json:"tracking_pairs" required:"true"`
 
-	SpreadForStartBuy      string `json:"spread_for_start_buy" required:"true"`
-	SpreadForStartSell     string `json:"spread_for_start_sell" required:"true"`
-	SpreadForStopBuyTrade  string `json:"spread_for_stop_buy_trade" required:"true"`
+	SpreadForStartBuy      string `json:"spread_for_start_buy"       required:"true"`
+	SpreadForStartSell     string `json:"spread_for_start_sell"      required:"true"`
+	SpreadForStopBuyTrade  string `json:"spread_for_stop_buy_trade"  required:"true"`
 	SpreadForStopSellTrade string `json:"spread_for_stop_sell_trade" required:"true"`
 
 	TotalBuyInUSDT string `json:"total_buy_in_usdt" required:"true"`

@@ -107,7 +107,7 @@ func (s *Disbalance) Start(ctx context.Context, wg *sync.WaitGroup, interrupt ch
 					}
 				}
 
-				s.logger.Info().
+				s.logger.Debug().
 					Str("base", baseCurrency).
 					Str("bid pair", maxBidPair).
 					Str("bid price", maxBidPrice.Text('f', 10)).
