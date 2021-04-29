@@ -21,7 +21,7 @@ type Storage struct {
 	pairs  map[string]*response.Pair
 
 	userOrdersMx sync.RWMutex
-	UserOrders   map[int64]*response.AccountingOrder
+	UserOrders   map[int64]*Order
 	Balances     map[string]*response.Balance
 	Deals        []*response.Deal
 
@@ -68,11 +68,36 @@ type Session struct {
 	IsDone *abool.AtomicBool `json:"is_done"`
 }
 
+type Order struct {
+	ID               int64
+	TradeTimestamp   string
+	CreatedTimestamp string
+	State            int
+	Modifier         int
+	Pair             string
+	TradeIntent      int
+	OrderedVolume    *big.Float
+	LimitPrice       *big.Float
+	TotalSellVolume  *big.Float
+	TotalBuyVolume   *big.Float
+	TotalFeeQuoted   string
+	TotalFeeExt      string
+	Activated        string
+	TpActivateLevel  string
+	TrailDistance    string
+	TpSubmitLevel    string
+	TpLimitPrice     string
+	SlSubmitLevel    string
+	SlLimitPrice     string
+	StopTimestamp    string
+	TriggeredSide    string
+}
+
 func NewStorage() *Storage {
 	return &Storage{
 		pairMx:     sync.RWMutex{},
 		pairs:      make(map[string]*response.Pair),
-		UserOrders: map[int64]*response.AccountingOrder{},
+		UserOrders: map[int64]*Order{},
 		Balances:   map[string]*response.Balance{},
 		Deals:      []*response.Deal{},
 		OrderBooks: make(map[string]map[string]*Book),
@@ -111,7 +136,7 @@ func (s *Storage) RegisterOrderBook(pair *response.Pair) {
 	}
 }
 
-func (s *Storage) GetUserOrder(id int64) *response.AccountingOrder {
+func (s *Storage) GetUserOrder(id int64) *Order {
 	s.userOrdersMx.RLock()
 	defer s.userOrdersMx.RUnlock()
 
@@ -123,7 +148,7 @@ func (s *Storage) GetUserOrder(id int64) *response.AccountingOrder {
 	return order
 }
 
-func (s *Storage) SetUserOrder(order *response.AccountingOrder) {
+func (s *Storage) SetUserOrder(order *Order) {
 	s.userOrdersMx.Lock()
 	defer s.userOrdersMx.Unlock()
 
@@ -193,16 +218,11 @@ func (s *Storage) GetTotalBuyVolume(pair *response.Pair, sid string) (*big.Float
 	total := big.NewFloat(0)
 
 	for _, oid := range s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency].Sessions[sid].BuyOrders {
-		if s.UserOrders[oid].TotalBuyVolume == "" {
+		if s.UserOrders[oid].TotalBuyVolume.Cmp(dictionary.ZeroBigFloat) == 0 {
 			continue
 		}
 
-		orderTotalBuyVolume, ok := big.NewFloat(0).SetString(s.UserOrders[oid].TotalBuyVolume)
-		if !ok {
-			return nil, ok
-		}
-
-		total.Add(total, orderTotalBuyVolume)
+		total.Add(total, s.UserOrders[oid].TotalBuyVolume)
 	}
 
 	return total, true
@@ -215,16 +235,11 @@ func (s *Storage) GetTotalSellVolume(pair *response.Pair, sid string) (*big.Floa
 	total := big.NewFloat(0)
 
 	for _, oid := range s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency].Sessions[sid].SellOrders {
-		if s.UserOrders[oid].TotalSellVolume == "" {
+		if s.UserOrders[oid].TotalSellVolume.Cmp(dictionary.ZeroBigFloat) == 0 {
 			continue
 		}
 
-		orderTotalSellVolume, ok := big.NewFloat(0).SetString(s.UserOrders[oid].TotalSellVolume)
-		if !ok {
-			return nil, ok
-		}
-
-		total.Add(total, orderTotalSellVolume)
+		total.Add(total, s.UserOrders[oid].TotalSellVolume)
 	}
 
 	return total, true

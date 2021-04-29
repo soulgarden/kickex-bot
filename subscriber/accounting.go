@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math/big"
 	"os"
 	"syscall"
+
+	"github.com/soulgarden/kickex-bot/dictionary"
 
 	"github.com/soulgarden/kickex-bot/conf"
 
@@ -84,7 +87,74 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal) {
 			}
 
 			for _, order := range r.Orders {
-				s.storage.SetUserOrder(order)
+				o := &storage.Order{
+					ID:               order.ID,
+					TradeTimestamp:   order.TradeTimestamp,
+					CreatedTimestamp: order.CreatedTimestamp,
+					State:            order.State,
+					Modifier:         order.Modifier,
+					Pair:             order.Pair,
+					TradeIntent:      order.TradeIntent,
+					TotalFeeQuoted:   order.TotalFeeQuoted,
+					TotalFeeExt:      order.TotalFeeExt,
+					Activated:        order.Activated,
+					TpActivateLevel:  order.TpActivateLevel,
+					TrailDistance:    order.TrailDistance,
+					TpSubmitLevel:    order.TpSubmitLevel,
+					TpLimitPrice:     order.LimitPrice,
+					SlSubmitLevel:    order.SlSubmitLevel,
+					SlLimitPrice:     order.SlLimitPrice,
+					StopTimestamp:    order.StopTimestamp,
+					TriggeredSide:    order.TriggeredSide,
+				}
+
+				o.OrderedVolume, ok = big.NewFloat(0).SetString(order.OrderedVolume)
+				if !ok {
+					s.logger.Err(dictionary.ErrParseFloat).
+						Str("val", order.OrderedVolume).
+						Msg("parse string as float")
+					interrupt <- syscall.SIGSTOP
+
+					return
+				}
+
+				o.LimitPrice, ok = big.NewFloat(0).SetString(order.LimitPrice)
+				if !ok {
+					s.logger.Err(dictionary.ErrParseFloat).
+						Str("val", order.LimitPrice).
+						Msg("parse string as float")
+					interrupt <- syscall.SIGSTOP
+
+					return
+				}
+
+				o.TotalSellVolume = big.NewFloat(0)
+				if order.TotalSellVolume != "" {
+					o.TotalSellVolume, ok = big.NewFloat(0).SetString(order.TotalSellVolume)
+					if !ok {
+						s.logger.Err(dictionary.ErrParseFloat).
+							Str("val", order.TotalSellVolume).
+							Msg("parse string as float")
+						interrupt <- syscall.SIGSTOP
+
+						return
+					}
+				}
+
+				o.TotalBuyVolume = big.NewFloat(0)
+				if order.TotalBuyVolume != "" {
+					o.TotalBuyVolume, ok = big.NewFloat(0).SetString(order.TotalBuyVolume)
+					if !ok {
+						s.logger.Err(dictionary.ErrParseFloat).
+							Str("val", order.TotalBuyVolume).
+							Msg("parse string as float")
+						interrupt <- syscall.SIGSTOP
+
+						return
+					}
+				}
+
+				s.storage.SetUserOrder(o)
 			}
 
 			for _, balance := range r.Balance {

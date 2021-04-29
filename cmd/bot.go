@@ -49,12 +49,12 @@ var startCmd = &cobra.Command{
 
 		_, err := os.Stat(fmt.Sprintf(cfg.StorageDumpPath, cfg.Env))
 		if err == nil {
+			logger.Warn().Msg("load sessions from dump file")
+
 			err = st.LoadSessions(fmt.Sprintf(cfg.StorageDumpPath, cfg.Env))
 			if err != nil {
 				logger.Fatal().Err(err).Msg("load sessions from dump")
 			}
-
-			logger.Warn().Msg("load sessions from dump file")
 
 			if len(st.UserOrders) > 0 {
 				err = orderSvc.UpdateOrderStates(ctx, interrupt)
