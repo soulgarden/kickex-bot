@@ -2,7 +2,7 @@ package client
 
 import (
 	"encoding/json"
-	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"strconv"
@@ -325,9 +325,10 @@ func (c *Client) Auth() error {
 	}
 
 	if er.Error != nil {
-		c.logger.Err(err).Bytes("payload", msg).Msg("auth error")
+		err = fmt.Errorf("%w: %s", dictionary.ErrResponse, er.Error.Reason)
+		c.logger.Err(err).Bytes("response", msg).Msg("auth error")
 
-		return errors.New(er.Error.Reason)
+		return err
 	}
 
 	return nil

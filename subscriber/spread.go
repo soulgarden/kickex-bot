@@ -3,7 +3,6 @@ package subscriber
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math/big"
 	"os"
@@ -141,28 +140,12 @@ func (s *Spread) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan o
 		select {
 		case <-oldSessionChan:
 			var sess *storage.Session
+
 			for _, sess = range s.orderBook.Sessions {
 				if sess.IsDone.IsNotSet() {
-					break
+					s.processOldSession(ctx, cli, sess, interrupt)
 				}
 			}
-
-			sessCtx, cancel := context.WithCancel(ctx)
-
-			s.logger.Warn().Str("id", sess.ID).
-				Str("pair", s.pair.GetPairName()).
-				Msg("start old session")
-
-			if sess.ActiveSellOrderID != 0 {
-				go s.manageOrder(ctx, interrupt, sess, sess.ActiveSellOrderID)
-			} else if sess.ActiveBuyOrderID != 0 {
-				go s.manageOrder(ctx, interrupt, sess, sess.ActiveBuyOrderID)
-			}
-
-			s.processSession(sessCtx, cli, sess, interrupt)
-			s.logger.Warn().Str("id", sess.ID).Str("pair", s.pair.GetPairName()).Msg("session finished")
-
-			cancel()
 
 		case <-ctx.Done():
 			s.cleanUpActiveOrders()
@@ -183,6 +166,46 @@ func (s *Spread) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan o
 			cancel()
 		}
 	}
+}
+
+func (s *Spread) processOldSession(
+	ctx context.Context,
+	cli *client.Client,
+	sess *storage.Session,
+	interrupt chan os.Signal,
+) {
+	sessCtx, cancel := context.WithCancel(ctx)
+
+	s.logger.Warn().Str("id", sess.ID).
+		Str("pair", s.pair.GetPairName()).
+		Msg("start old session")
+
+	if sess.ActiveSellOrderID != 0 {
+		order := s.storage.GetUserOrder(sess.ActiveSellOrderID)
+		if order == nil {
+			s.logger.Error().
+				Int64("oid", sess.ActiveSellOrderID).
+				Msg("active sell order not fount in order list, skip broken session")
+			cancel()
+		}
+
+		go s.manageOrder(ctx, interrupt, sess, sess.ActiveSellOrderID)
+	} else if sess.ActiveBuyOrderID != 0 {
+		order := s.storage.GetUserOrder(sess.ActiveBuyOrderID)
+		if order == nil {
+			s.logger.Error().
+				Int64("oid", sess.ActiveBuyOrderID).
+				Msg("active buy order not fount in order list, skip broken session")
+			cancel()
+		}
+
+		go s.manageOrder(ctx, interrupt, sess, sess.ActiveBuyOrderID)
+	}
+
+	s.processSession(sessCtx, cli, sess, interrupt)
+	s.logger.Warn().Str("id", sess.ID).Str("pair", s.pair.GetPairName()).Msg("session finished")
+
+	cancel()
 }
 
 func (s *Spread) processSession(
@@ -369,9 +392,11 @@ func (s *Spread) checkListenOrderErrors(msg []byte, attempts int, sess *storage.
 			}
 		}
 
-		s.logger.Err(errors.New(er.Error.Reason)).Bytes("response", msg).Msg("received error")
+		err = fmt.Errorf("%w: %s", dictionary.ErrResponse, er.Error.Reason)
 
-		return false, attempts, errors.New(er.Error.Reason)
+		s.logger.Err(err).Bytes("response", msg).Msg("received error")
+
+		return false, attempts, err
 	}
 
 	return false, 0, nil
@@ -493,6 +518,8 @@ func (s *Spread) manageOrder(ctx context.Context, interrupt chan os.Signal, sess
 			// order sent, wait creation
 			order := s.storage.GetUserOrder(orderID)
 			if order == nil {
+				s.logger.Warn().Int64("oid", orderID).Msg("order not found")
+
 				continue
 			}
 
@@ -505,6 +532,8 @@ func (s *Spread) manageOrder(ctx context.Context, interrupt chan os.Signal, sess
 			}
 
 			if order.State < dictionary.StateActive {
+				s.logger.Warn().Int64("oid", orderID).Msg("order state is below active")
+
 				continue
 			}
 
@@ -747,9 +776,10 @@ func (s *Spread) cancelOrder(cli *client.Client, orderID int64) error {
 
 	if er.Error != nil {
 		if er.Error.Reason != response.CancelledOrder {
-			s.logger.Error().Bytes("payload", msg).Msg("can't cancel order")
+			err = fmt.Errorf("%w: %s", dictionary.ErrResponse, er.Error.Reason)
+			s.logger.Err(err).Bytes("response", msg).Msg("can't cancel order")
 
-			return errors.New(er.Error.Reason)
+			return err
 		}
 	}
 

@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"math/big"
 	"os"
 	"syscall"
@@ -178,14 +178,15 @@ func (s *Order) checkErrorResponse(msg []byte) error {
 
 	if er.Error != nil {
 		if er.Error.Code == response.OrderNotFoundOrOutdated {
-			s.logger.Warn().Bytes("response", msg).Msg("received order not found")
+			s.logger.Error().Bytes("response", msg).Msg("received order not found")
 
 			return nil
 		}
 
+		err = fmt.Errorf("%w: %s", dictionary.ErrResponse, er.Error.Reason)
 		s.logger.Err(err).Bytes("response", msg).Msg("received error")
 
-		return errors.New(er.Error.Reason)
+		return err
 	}
 
 	return nil

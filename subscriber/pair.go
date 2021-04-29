@@ -3,7 +3,7 @@ package subscriber
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"os"
 	"syscall"
 
@@ -96,9 +96,10 @@ func (s *Pairs) checkErrorResponse(msg []byte) error {
 	}
 
 	if er.Error != nil {
+		err = fmt.Errorf("%w: %s", dictionary.ErrResponse, er.Error.Reason)
 		s.logger.Err(err).Bytes("response", msg).Msg("received error")
 
-		return errors.New(er.Error.Reason)
+		return err
 	}
 
 	return nil

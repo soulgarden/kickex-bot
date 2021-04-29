@@ -110,7 +110,7 @@ var startCmd = &cobra.Command{
 
 			go subscriber.NewOrderBook(cfg, st, eventBroker, pair, &logger).Start(ctx, interrupt)
 
-			orderManager, err := subscriber.NewSpread(
+			spreadTrader, err := subscriber.NewSpread(
 				cfg,
 				st,
 				eventBroker,
@@ -126,7 +126,7 @@ var startCmd = &cobra.Command{
 			}
 
 			wg.Add(1)
-			go orderManager.Start(ctx, &wg, interrupt)
+			go spreadTrader.Start(ctx, &wg, interrupt)
 		}
 
 		go func() {
