@@ -366,7 +366,7 @@ func (s *Spread) checkListenOrderErrors(msg []byte, attempts int, sess *storage.
 					Int64("oid", atomic.LoadInt64(&sess.ActiveBuyOrderID)).
 					Msg("consider prev buy order as executed, allow to place sell order")
 
-				s.setBuyOrderExecutedFlags(sess, s.storage.UserOrders[id])
+				s.setBuyOrderExecutedFlags(sess, s.storage.UserOrders[atomic.LoadInt64(&sess.PrevBuyOrderID)])
 			} else if id == atomic.LoadInt64(&sess.ActiveSellOrderID) {
 				s.logger.Warn().
 					Str("pair", s.pair.GetPairName()).
@@ -374,7 +374,7 @@ func (s *Spread) checkListenOrderErrors(msg []byte, attempts int, sess *storage.
 					Int64("oid", atomic.LoadInt64(&sess.ActiveSellOrderID)).
 					Msg("consider prev sell order as executed, allow to place buy order")
 
-				s.setSellOrderExecutedFlags(sess, s.storage.UserOrders[id])
+				s.setSellOrderExecutedFlags(sess, s.storage.UserOrders[atomic.LoadInt64(&sess.PrevSellOrderID)])
 			}
 
 			return true, attempts, nil
