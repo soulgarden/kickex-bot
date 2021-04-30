@@ -6,14 +6,17 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"strconv"
 	"syscall"
+
+	"github.com/soulgarden/kickex-bot/broker"
+	"github.com/soulgarden/kickex-bot/service"
 
 	"github.com/soulgarden/kickex-bot/dictionary"
 
 	"github.com/soulgarden/kickex-bot/conf"
 
 	"github.com/rs/zerolog"
-	"github.com/soulgarden/kickex-bot/client"
 	"github.com/soulgarden/kickex-bot/response"
 	"github.com/soulgarden/kickex-bot/storage"
 )
@@ -21,33 +24,29 @@ import (
 type Accounting struct {
 	cfg         *conf.Bot
 	storage     *storage.Storage
-	eventBroker *Broker
+	eventBroker *broker.Broker
+	wsSvc       *service.WS
 	logger      *zerolog.Logger
 }
 
-func NewAccounting(cfg *conf.Bot, storage *storage.Storage, eventBroker *Broker, logger *zerolog.Logger) *Accounting {
-	return &Accounting{cfg: cfg, storage: storage, eventBroker: eventBroker, logger: logger}
+func NewAccounting(
+	cfg *conf.Bot,
+	storage *storage.Storage,
+	eventBroker *broker.Broker,
+	wsSvc *service.WS,
+	logger *zerolog.Logger,
+) *Accounting {
+	return &Accounting{cfg: cfg, storage: storage, eventBroker: eventBroker, wsSvc: wsSvc, logger: logger}
 }
 
 func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal) {
-	cli, err := client.NewWsCli(s.cfg, interrupt, s.logger)
-	if err != nil {
-		s.logger.Err(err).Msg("connection error")
-		interrupt <- syscall.SIGSTOP
+	s.logger.Warn().Msg("accounting subscriber starting...")
+	defer s.logger.Warn().Msg("accounting subscriber stopped")
 
-		return
-	}
+	eventsCh := s.eventBroker.Subscribe()
+	defer s.eventBroker.Unsubscribe(eventsCh)
 
-	defer cli.Close()
-
-	err = cli.Auth()
-	if err != nil {
-		interrupt <- syscall.SIGSTOP
-
-		return
-	}
-
-	err = cli.SubscribeAccounting(false)
+	id, err := s.wsSvc.SubscribeAccounting(false)
 	if err != nil {
 		s.logger.Err(err).Msg("subscribe accounting")
 		interrupt <- syscall.SIGSTOP
@@ -57,12 +56,32 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal) {
 
 	for {
 		select {
-		case msg, ok := <-cli.ReadCh:
+		case e, ok := <-eventsCh:
 			if !ok {
-				s.logger.Err(err).Msg("read channel closed")
 				interrupt <- syscall.SIGSTOP
 
 				return
+			}
+
+			msg, ok := e.([]byte)
+			if !ok {
+				interrupt <- syscall.SIGSTOP
+
+				return
+			}
+
+			rid := &response.ID{}
+
+			err := json.Unmarshal(msg, rid)
+			if err != nil {
+				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
+				interrupt <- syscall.SIGSTOP
+
+				return
+			}
+
+			if strconv.FormatInt(id, 10) != rid.ID {
+				continue
 			}
 
 			s.logger.Debug().
@@ -77,7 +96,7 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal) {
 			}
 
 			r := &response.AccountingUpdates{}
-			err := json.Unmarshal(msg, r)
+			err = json.Unmarshal(msg, r)
 
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
@@ -154,7 +173,7 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal) {
 					}
 				}
 
-				s.storage.SetUserOrder(o)
+				s.storage.UpsertUserOrder(o)
 			}
 
 			for _, balance := range r.Balance {

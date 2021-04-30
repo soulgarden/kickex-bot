@@ -17,4 +17,4 @@ vendor/
 
 .idea
 conf/conf.local.json
-conf/conf.json
+conf/conf.demo.json

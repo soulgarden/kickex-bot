@@ -12,10 +12,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/soulgarden/kickex-bot/broker"
+
 	"github.com/soulgarden/kickex-bot/service"
 
 	"github.com/rs/zerolog"
-	"github.com/soulgarden/kickex-bot/client"
 	"github.com/soulgarden/kickex-bot/conf"
 	"github.com/soulgarden/kickex-bot/dictionary"
 	"github.com/soulgarden/kickex-bot/response"
@@ -27,9 +28,10 @@ type Spread struct {
 	pair        *response.Pair
 	orderBook   *storage.Book
 	storage     *storage.Storage
-	eventBroker *Broker
+	eventBroker *broker.Broker
 	conversion  *service.Conversion
 	tgSvc       *service.Telegram
+	wsSvc       *service.WS
 
 	priceStep              *big.Float
 	spreadForStartBuy      *big.Float
@@ -43,9 +45,10 @@ type Spread struct {
 func NewSpread(
 	cfg *conf.Bot,
 	storage *storage.Storage,
-	eventBroker *Broker,
+	eventBroker *broker.Broker,
 	conversion *service.Conversion,
 	tgSvc *service.Telegram,
+	wsSvc *service.WS,
 	pair *response.Pair,
 	logger *zerolog.Logger,
 ) (*Spread, error) {
@@ -94,6 +97,7 @@ func NewSpread(
 		eventBroker:            eventBroker,
 		conversion:             conversion,
 		tgSvc:                  tgSvc,
+		wsSvc:                  wsSvc,
 		priceStep:              priceStep,
 		spreadForStartBuy:      spreadForStartTrade,
 		spreadForStartSell:     spreadForStartSell,
@@ -110,25 +114,7 @@ func (s *Spread) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan o
 	}()
 
 	s.logger.Warn().Str("pair", s.pair.GetPairName()).Msg("order manager starting...")
-
-	cli, err := client.NewWsCli(s.cfg, interrupt, s.logger)
-
-	if err != nil {
-		s.logger.Err(err).Msg("connection error")
-
-		interrupt <- syscall.SIGSTOP
-
-		return
-	}
-
-	defer cli.Close()
-
-	err = cli.Auth()
-	if err != nil {
-		interrupt <- syscall.SIGSTOP
-
-		return
-	}
+	defer s.logger.Warn().Str("pair", s.pair.GetPairName()).Msg("order manager stopped")
 
 	oldSessionChan := make(chan int, 1)
 
@@ -143,7 +129,7 @@ func (s *Spread) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan o
 
 			for _, sess = range s.orderBook.Sessions {
 				if sess.IsDone.IsNotSet() {
-					s.processOldSession(ctx, cli, sess, interrupt)
+					s.processOldSession(ctx, sess, interrupt)
 				}
 			}
 
@@ -160,7 +146,7 @@ func (s *Spread) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan o
 
 			s.logger.Warn().Str("id", sess.ID).Str("pair", s.pair.GetPairName()).Msg("start session")
 
-			s.processSession(sessCtx, cli, sess, interrupt)
+			s.processSession(sessCtx, sess, interrupt)
 			s.logger.Warn().Str("id", sess.ID).Str("pair", s.pair.GetPairName()).Msg("session finished")
 
 			cancel()
@@ -170,15 +156,18 @@ func (s *Spread) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan o
 
 func (s *Spread) processOldSession(
 	ctx context.Context,
-	cli *client.Client,
 	sess *storage.Session,
 	interrupt chan os.Signal,
 ) {
-	sessCtx, cancel := context.WithCancel(ctx)
-
 	s.logger.Warn().Str("id", sess.ID).
 		Str("pair", s.pair.GetPairName()).
-		Msg("start old session")
+		Msg("old session started")
+
+	defer s.logger.Warn().Str("id", sess.ID).
+		Str("pair", s.pair.GetPairName()).
+		Msg("old session stopped")
+
+	sessCtx, cancel := context.WithCancel(ctx)
 
 	if sess.ActiveSellOrderID != 0 {
 		order := s.storage.GetUserOrder(sess.ActiveSellOrderID)
@@ -189,7 +178,7 @@ func (s *Spread) processOldSession(
 			cancel()
 		}
 
-		go s.manageOrder(ctx, interrupt, sess, sess.ActiveSellOrderID)
+		go s.manageOrder(ctx, sess, sess.ActiveSellOrderID)
 	} else if sess.ActiveBuyOrderID != 0 {
 		order := s.storage.GetUserOrder(sess.ActiveBuyOrderID)
 		if order == nil {
@@ -199,10 +188,10 @@ func (s *Spread) processOldSession(
 			cancel()
 		}
 
-		go s.manageOrder(ctx, interrupt, sess, sess.ActiveBuyOrderID)
+		go s.manageOrder(ctx, sess, sess.ActiveBuyOrderID)
 	}
 
-	s.processSession(sessCtx, cli, sess, interrupt)
+	s.processSession(sessCtx, sess, interrupt)
 	s.logger.Warn().Str("id", sess.ID).Str("pair", s.pair.GetPairName()).Msg("session finished")
 
 	cancel()
@@ -210,20 +199,19 @@ func (s *Spread) processOldSession(
 
 func (s *Spread) processSession(
 	ctx context.Context,
-	cli *client.Client,
 	sess *storage.Session,
 	interrupt chan os.Signal,
 ) {
 	go func() {
-		if err := s.listenNewOrders(ctx, interrupt, cli, sess); err != nil {
+		if err := s.listenNewOrders(ctx, interrupt, sess); err != nil {
 			interrupt <- syscall.SIGSTOP
 		}
 	}()
 
-	s.orderCreationDecider(ctx, cli, sess, interrupt)
+	s.orderCreationDecider(ctx, sess, interrupt)
 }
 
-func (s *Spread) orderCreationDecider(ctx context.Context, cli *client.Client, sess *storage.Session, interrupt chan os.Signal) {
+func (s *Spread) orderCreationDecider(ctx context.Context, sess *storage.Session, interrupt chan os.Signal) {
 	e := s.eventBroker.Subscribe()
 	defer s.eventBroker.Unsubscribe(e)
 
@@ -250,7 +238,7 @@ func (s *Spread) orderCreationDecider(ctx context.Context, cli *client.Client, s
 				maxBid := s.orderBook.GetBid(maxBidPrice)
 
 				if maxBid.Amount.Cmp(buyVolume) >= 0 {
-					if err := s.createBuyOrder(cli, sess); err != nil {
+					if err := s.createBuyOrder(sess); err != nil {
 						interrupt <- syscall.SIGINT
 
 						return
@@ -274,7 +262,7 @@ func (s *Spread) orderCreationDecider(ctx context.Context, cli *client.Client, s
 				minAsk := s.orderBook.GetAsk(minAskPrice)
 
 				if minAsk.Amount.Cmp(sellVolume) >= 0 {
-					if err := s.createSellOrder(cli, sess); err != nil {
+					if err := s.createSellOrder(sess); err != nil {
 						interrupt <- syscall.SIGINT
 
 						return
@@ -290,20 +278,45 @@ func (s *Spread) orderCreationDecider(ctx context.Context, cli *client.Client, s
 func (s *Spread) listenNewOrders(
 	ctx context.Context,
 	interrupt chan os.Signal,
-	cli *client.Client,
 	sess *storage.Session,
 ) error {
-	attempts := 0
+	s.logger.Warn().Str("pair", s.pair.GetPairName()).Msg("listen new orders subscriber starting...")
+	defer s.logger.Warn().Str("pair", s.pair.GetPairName()).Msg("listen new orders subscriber stopped")
 
-	var err error
+	eventsCh := s.eventBroker.Subscribe()
+	defer s.eventBroker.Unsubscribe(eventsCh)
+
+	attempts := 0
 
 	var skip bool
 
 	for {
 		select {
-		case msg, ok := <-cli.ReadCh:
+		case e, ok := <-eventsCh:
 			if !ok {
 				return nil
+			}
+
+			msg, ok := e.([]byte)
+			if !ok {
+				interrupt <- syscall.SIGSTOP
+
+				return dictionary.ErrCantConvertInterfaceToBytes
+			}
+
+			rid := &response.ID{}
+			err := json.Unmarshal(msg, rid)
+
+			if err != nil {
+				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
+				interrupt <- syscall.SIGSTOP
+
+				return err
+			}
+
+			if strconv.FormatInt(atomic.LoadInt64(&sess.ActiveBuyExtOrderID), 10) != rid.ID &&
+				strconv.FormatInt(atomic.LoadInt64(&sess.ActiveSellExtOrderID), 10) != rid.ID {
+				continue
 			}
 
 			s.logger.Warn().
@@ -328,7 +341,19 @@ func (s *Spread) listenNewOrders(
 				return err
 			}
 
-			go s.manageOrder(ctx, interrupt, sess, co.OrderID)
+			if strconv.FormatInt(atomic.LoadInt64(&sess.ActiveBuyExtOrderID), 10) != rid.ID {
+				atomic.StoreInt64(&sess.ActiveBuyOrderID, co.OrderID)
+				atomic.StoreInt64(&sess.ActiveBuyExtOrderID, 0)
+				s.storage.AddBuyOrder(s.pair, sess.ID, co.OrderID)
+			}
+
+			if strconv.FormatInt(atomic.LoadInt64(&sess.ActiveSellExtOrderID), 10) != rid.ID {
+				atomic.StoreInt64(&sess.ActiveSellOrderID, co.OrderID)
+				atomic.StoreInt64(&sess.ActiveSellExtOrderID, 0)
+				s.storage.AddSellOrder(s.pair, sess.ID, co.OrderID)
+			}
+
+			go s.manageOrder(ctx, sess, co.OrderID)
 
 		case <-ctx.Done():
 			return nil
@@ -402,7 +427,7 @@ func (s *Spread) checkListenOrderErrors(msg []byte, attempts int, sess *storage.
 	return false, 0, nil
 }
 
-func (s *Spread) createBuyOrder(cli *client.Client, sess *storage.Session) error {
+func (s *Spread) createBuyOrder(sess *storage.Session) error {
 	atomic.StoreInt64(&sess.ActiveBuyOrderID, 1)
 
 	var err error
@@ -425,7 +450,7 @@ func (s *Spread) createBuyOrder(cli *client.Client, sess *storage.Session) error
 		Msg("time to place buy order")
 
 	// todo subscribe to balance updates for ensure that assets is enough
-	extID, err := cli.CreateOrder(
+	extID, err := s.wsSvc.CreateOrder(
 		s.pair.GetPairName(),
 		amount.Text('f', s.pair.QuantityScale),
 		price.Text('f', s.pair.PriceScale),
@@ -437,12 +462,12 @@ func (s *Spread) createBuyOrder(cli *client.Client, sess *storage.Session) error
 		return err
 	}
 
-	atomic.StoreInt64(&sess.ActiveBuyOrderID, extID)
+	atomic.StoreInt64(&sess.ActiveBuyExtOrderID, extID)
 
 	return nil
 }
 
-func (s *Spread) createSellOrder(cli *client.Client, sess *storage.Session) error {
+func (s *Spread) createSellOrder(sess *storage.Session) error {
 	amount, total, price, err := s.calculateSellOrderVolume(sess)
 	if err != nil {
 		s.logger.Err(err).Msg("calculate sell order volume")
@@ -460,7 +485,7 @@ func (s *Spread) createSellOrder(cli *client.Client, sess *storage.Session) erro
 		Str("spread", s.calcBuySpread(atomic.LoadInt64(&sess.ActiveBuyOrderID)).String()).
 		Msg("time to place sell order")
 
-	extID, err := cli.CreateOrder(
+	extID, err := s.wsSvc.CreateOrder(
 		s.pair.GetPairName(),
 		amount.Text('f', s.pair.QuantityScale),
 		price.Text('f', s.pair.PriceScale),
@@ -472,12 +497,12 @@ func (s *Spread) createSellOrder(cli *client.Client, sess *storage.Session) erro
 		return err
 	}
 
-	atomic.StoreInt64(&sess.ActiveSellOrderID, extID)
+	atomic.StoreInt64(&sess.ActiveSellExtOrderID, extID)
 
 	return nil
 }
 
-func (s *Spread) manageOrder(ctx context.Context, interrupt chan os.Signal, sess *storage.Session, orderID int64) {
+func (s *Spread) manageOrder(ctx context.Context, sess *storage.Session, orderID int64) {
 	s.logger.Warn().
 		Str("pair", s.pair.GetPairName()).
 		Int64("oid", orderID).
@@ -486,31 +511,13 @@ func (s *Spread) manageOrder(ctx context.Context, interrupt chan os.Signal, sess
 	e := s.eventBroker.Subscribe()
 
 	defer func() {
+		s.eventBroker.Unsubscribe(e)
+
 		s.logger.Warn().
 			Str("pair", s.pair.GetPairName()).
 			Int64("oid", orderID).
 			Msg("stop order manager process")
-
-		s.eventBroker.Unsubscribe(e)
 	}()
-
-	cli, err := client.NewWsCli(s.cfg, interrupt, s.logger)
-	if err != nil {
-		s.logger.Err(err).Msg("connection error")
-
-		interrupt <- syscall.SIGSTOP
-
-		return
-	}
-
-	err = cli.Auth()
-	if err != nil {
-		interrupt <- syscall.SIGSTOP
-
-		return
-	}
-
-	defer cli.Close()
 
 	for {
 		select {
@@ -521,14 +528,6 @@ func (s *Spread) manageOrder(ctx context.Context, interrupt chan os.Signal, sess
 				s.logger.Warn().Int64("oid", orderID).Msg("order not found")
 
 				continue
-			}
-
-			if order.TradeIntent == dictionary.BuyBase {
-				atomic.StoreInt64(&sess.ActiveBuyOrderID, orderID)
-				s.storage.AddBuyOrder(s.pair, sess.ID, orderID)
-			} else if order.TradeIntent == dictionary.SellBase {
-				atomic.StoreInt64(&sess.ActiveSellOrderID, orderID)
-				s.storage.AddSellOrder(s.pair, sess.ID, orderID)
 			}
 
 			if order.State < dictionary.StateActive {
@@ -577,7 +576,7 @@ func (s *Spread) manageOrder(ctx context.Context, interrupt chan os.Signal, sess
 						Str("spread", spread.String()).
 						Msg("time to cancel buy order")
 
-					err := s.cancelOrder(cli, orderID)
+					err := s.cancelOrder(orderID)
 					if err != nil {
 						if err.Error() == response.DoneOrder {
 							s.logger.Warn().
@@ -626,7 +625,7 @@ func (s *Spread) manageOrder(ctx context.Context, interrupt chan os.Signal, sess
 						Bool("prev possible bid price exists", prevPriceExists).
 						Msg("time to move buy order")
 
-					err := s.cancelOrder(cli, orderID)
+					err := s.cancelOrder(orderID)
 					if err != nil {
 						if err.Error() == response.DoneOrder {
 							s.logger.Warn().
@@ -662,7 +661,7 @@ func (s *Spread) manageOrder(ctx context.Context, interrupt chan os.Signal, sess
 						Str("spread", spread.String()).
 						Msg("time to cancel sell order")
 
-					err := s.cancelOrder(cli, orderID)
+					err := s.cancelOrder(orderID)
 					if err != nil {
 						if err.Error() == response.DoneOrder {
 							s.logger.Warn().
@@ -705,7 +704,7 @@ func (s *Spread) manageOrder(ctx context.Context, interrupt chan os.Signal, sess
 						Bool("prev possible ask price exists", prevPriceExists).
 						Msg("time to move sell order")
 
-					err := s.cancelOrder(cli, orderID)
+					err := s.cancelOrder(orderID)
 					if err != nil {
 						if err.Error() == response.DoneOrder {
 							s.logger.Warn().
@@ -750,36 +749,54 @@ func (s *Spread) calcBuySpread(activeBuyOrderID int64) *big.Float {
 	)
 }
 
-func (s *Spread) cancelOrder(cli *client.Client, orderID int64) error {
-	err := cli.CancelOrder(orderID)
+func (s *Spread) cancelOrder(orderID int64) error {
+	eventsCh := s.eventBroker.Subscribe()
+	defer s.eventBroker.Unsubscribe(eventsCh)
+
+	id, err := s.wsSvc.CancelOrder(orderID)
 	if err != nil {
 		s.logger.Fatal().Int64("oid", orderID).Msg("cancel order")
 	}
 
-	msg, ok := <-cli.ReadCh
-	if !ok {
-		return nil
-	}
+	for e := range eventsCh {
+		msg, ok := e.([]byte)
+		if !ok {
+			return dictionary.ErrCantConvertInterfaceToBytes
+		}
 
-	s.logger.Info().
-		Str("pair", s.pair.GetPairName()).
-		Int64("oid", orderID).
-		Bytes("payload", msg).
-		Msg("cancel order response received")
+		rid := &response.ID{}
+		err := json.Unmarshal(msg, rid)
 
-	er := &response.Error{}
-
-	err = json.Unmarshal(msg, er)
-	if err != nil {
-		s.logger.Fatal().Err(err).Msg("unmarshall")
-	}
-
-	if er.Error != nil {
-		if er.Error.Reason != response.CancelledOrder {
-			err = fmt.Errorf("%w: %s", dictionary.ErrResponse, er.Error.Reason)
-			s.logger.Err(err).Bytes("response", msg).Msg("can't cancel order")
+		if err != nil {
+			s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
 			return err
+		}
+
+		if strconv.FormatInt(id, 10) != rid.ID {
+			continue
+		}
+
+		s.logger.Info().
+			Str("pair", s.pair.GetPairName()).
+			Int64("oid", orderID).
+			Bytes("payload", msg).
+			Msg("cancel order response received")
+
+		er := &response.Error{}
+
+		err = json.Unmarshal(msg, er)
+		if err != nil {
+			s.logger.Fatal().Err(err).Msg("unmarshall")
+		}
+
+		if er.Error != nil {
+			if er.Error.Reason != response.CancelledOrder {
+				err = fmt.Errorf("%w: %s", dictionary.ErrResponse, er.Error.Reason)
+				s.logger.Err(err).Bytes("response", msg).Msg("can't cancel order")
+
+				return err
+			}
 		}
 	}
 
@@ -812,7 +829,8 @@ volume: %s`,
 	))
 }
 
-func (s *Spread) setSellOrderExecutedFlags(sess *storage.Session, order *storage.Order) {
+func (s *Spread) setSellOrderExecutedFlags(sess *storage.Session,
+	order *storage.Order) {
 	atomic.AddInt64(&s.orderBook.CompletedSellOrders, 1)
 	atomic.StoreInt64(&sess.PrevSellOrderID, 0)
 	atomic.StoreInt64(&sess.ActiveSellOrderID, 0)
@@ -840,30 +858,11 @@ volume: %s`,
 }
 
 func (s *Spread) cleanUpActiveOrders() {
-	interrupt := make(chan os.Signal, 1)
-	cli, err := client.NewWsCli(s.cfg, interrupt, s.logger)
-
-	if err != nil {
-		s.logger.Err(err).Msg("connection error")
-
-		return
-	}
-
-	defer cli.Close()
-
-	err = cli.Auth()
-	if err != nil {
-		s.logger.Err(err).Msg("auth error")
-
-		return
-	}
-
 	for _, sess := range s.orderBook.Sessions {
-		// cleanup orders
 		if atomic.LoadInt64(&sess.ActiveBuyOrderID) > 1 {
 			if o := s.storage.GetUserOrder(atomic.LoadInt64(&sess.ActiveBuyOrderID)); o != nil &&
 				o.State < dictionary.StateDone {
-				err := s.cancelOrder(cli, atomic.LoadInt64(&sess.ActiveBuyOrderID))
+				err := s.cancelOrder(atomic.LoadInt64(&sess.ActiveBuyOrderID))
 				s.logger.Err(err).Int64("oid", atomic.LoadInt64(&sess.ActiveBuyOrderID)).Msg("cancel active buy order")
 				atomic.StoreInt64(&sess.PrevBuyOrderID, o.ID)
 				atomic.StoreInt64(&sess.ActiveBuyOrderID, 0) // need to create new buy order after restart
@@ -873,7 +872,7 @@ func (s *Spread) cleanUpActiveOrders() {
 		if atomic.LoadInt64(&sess.ActiveSellOrderID) > 1 {
 			if o := s.storage.GetUserOrder(atomic.LoadInt64(&sess.ActiveSellOrderID)); o != nil &&
 				o.State < dictionary.StateDone {
-				err := s.cancelOrder(cli, atomic.LoadInt64(&sess.ActiveSellOrderID))
+				err := s.cancelOrder(atomic.LoadInt64(&sess.ActiveSellOrderID))
 				s.logger.Err(err).Int64("oid", atomic.LoadInt64(&sess.ActiveSellOrderID)).Msg("cancel active sell order")
 				atomic.StoreInt64(&sess.PrevSellOrderID, o.ID)
 				atomic.StoreInt64(&sess.ActiveSellOrderID, 1) // need to create new sell order after restart

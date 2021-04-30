@@ -55,12 +55,14 @@ type BookOrder struct {
 }
 
 type Session struct {
-	ID               string `json:"id"`
-	ActiveBuyOrderID int64  `json:"active_buy_order_id"`
-	PrevBuyOrderID   int64  `json:"prev_buy_order_id"`
+	ID                  string `json:"id"`
+	ActiveBuyExtOrderID int64  `json:"active_buy_ext_order_id"`
+	ActiveBuyOrderID    int64  `json:"active_buy_order_id"`
+	PrevBuyOrderID      int64  `json:"prev_buy_order_id"`
 
-	ActiveSellOrderID int64 `json:"active_sell_order_id"`
-	PrevSellOrderID   int64 `json:"prev_sell_order_id"`
+	ActiveSellExtOrderID int64 `json:"active_sell_order_id"`
+	ActiveSellOrderID    int64 `json:"active_sell_ext_order_id"`
+	PrevSellOrderID      int64 `json:"prev_sell_order_id"`
 
 	BuyOrders  map[int64]int64 `json:"buy_orders"`
 	SellOrders map[int64]int64 `json:"sell_orders"`
@@ -148,7 +150,7 @@ func (s *Storage) GetUserOrder(id int64) *Order {
 	return order
 }
 
-func (s *Storage) SetUserOrder(order *Order) {
+func (s *Storage) UpsertUserOrder(order *Order) {
 	s.userOrdersMx.Lock()
 	defer s.userOrdersMx.Unlock()
 
@@ -427,7 +429,7 @@ func (s *Storage) DumpSessions(path string) error {
 		return err
 	}
 
-	err = ioutil.WriteFile(path, marshalled, 0644)
+	err = ioutil.WriteFile(path, marshalled, 0600)
 
 	return err
 }

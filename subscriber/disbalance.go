@@ -7,6 +7,8 @@ import (
 	"os"
 	"sync"
 
+	"github.com/soulgarden/kickex-bot/broker"
+
 	"github.com/tevino/abool"
 
 	"github.com/rs/zerolog"
@@ -19,7 +21,7 @@ import (
 type Disbalance struct {
 	cfg         *conf.Bot
 	storage     *storage.Storage
-	eventBroker *Broker
+	eventBroker *broker.Broker
 	conversion  *service.Conversion
 	tgSvc       *service.Telegram
 	logger      *zerolog.Logger
@@ -28,7 +30,7 @@ type Disbalance struct {
 func NewDisbalance(
 	cfg *conf.Bot,
 	storage *storage.Storage,
-	eventBroker *Broker,
+	eventBroker *broker.Broker,
 	conversion *service.Conversion,
 	tgSvc *service.Telegram,
 	logger *zerolog.Logger,

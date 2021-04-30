@@ -167,8 +167,8 @@ func (c *Client) authorize(apiKey, apiKeyPass string) error {
 }
 
 // nolint: unused
-func (c *Client) getUserOpenOrders(pair string) error {
-	atomic.AddInt64(&c.id, 1)
+func (c *Client) getUserOpenOrders(pair string) (int64, error) {
+	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.GetUsersOpenOrders{
 		ID:   strconv.FormatInt(c.id, 10),
@@ -176,11 +176,11 @@ func (c *Client) getUserOpenOrders(pair string) error {
 		Pair: pair,
 	}
 
-	return c.sendMessage(body)
+	return id, c.sendMessage(body)
 }
 
-func (c *Client) SubscribeAccounting(includeDeals bool) error {
-	atomic.AddInt64(&c.id, 1)
+func (c *Client) SubscribeAccounting(includeDeals bool) (int64, error) {
+	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.SubscribeAccounting{
 		ID:           strconv.FormatInt(c.id, 10),
@@ -188,11 +188,11 @@ func (c *Client) SubscribeAccounting(includeDeals bool) error {
 		IncludeDeals: includeDeals,
 	}
 
-	return c.sendMessage(body)
+	return id, c.sendMessage(body)
 }
 
-func (c *Client) GetOrderBookAndSubscribe(pairs string) error {
-	atomic.AddInt64(&c.id, 1)
+func (c *Client) GetOrderBookAndSubscribe(pairs string) (int64, error) {
+	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.GetOrderBookAndSubscribe{
 		ID:   strconv.FormatInt(c.id, 10),
@@ -200,18 +200,18 @@ func (c *Client) GetOrderBookAndSubscribe(pairs string) error {
 		Pair: pairs,
 	}
 
-	return c.sendMessage(body)
+	return id, c.sendMessage(body)
 }
 
-func (c *Client) GetPairsAndSubscribe() error {
-	atomic.AddInt64(&c.id, 1)
+func (c *Client) GetPairsAndSubscribe() (int64, error) {
+	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.GetPairsAndSubscribe{
 		ID:   strconv.FormatInt(c.id, 10),
 		Type: dictionary.GetPairsAndSubscribe,
 	}
 
-	return c.sendMessage(body)
+	return id, c.sendMessage(body)
 }
 
 func (c *Client) CreateOrder(pair, volume, limitPrice string, tradeIntent int) (int64, error) {
@@ -254,8 +254,8 @@ func (c *Client) alterOrder(pair, volume, limitPrice string, tradeIntent int, or
 	return c.id, c.sendMessage(body)
 }
 
-func (c *Client) CancelOrder(orderID int64) error {
-	atomic.AddInt64(&c.id, 1)
+func (c *Client) CancelOrder(orderID int64) (int64, error) {
+	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.CancelOrder{
 		ID:      strconv.FormatInt(c.id, 10),
@@ -263,11 +263,11 @@ func (c *Client) CancelOrder(orderID int64) error {
 		OrderID: orderID,
 	}
 
-	return c.sendMessage(body)
+	return id, c.sendMessage(body)
 }
 
-func (c *Client) GetOrder(orderID int64) error {
-	atomic.AddInt64(&c.id, 1)
+func (c *Client) GetOrder(orderID int64) (int64, error) {
+	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.GetOrder{
 		ID:      strconv.FormatInt(c.id, 10),
@@ -275,7 +275,7 @@ func (c *Client) GetOrder(orderID int64) error {
 		OrderID: orderID,
 	}
 
-	return c.sendMessage(body)
+	return id, c.sendMessage(body)
 }
 
 func (c *Client) sendMessage(payload interface{}) error {

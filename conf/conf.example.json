@@ -3,7 +3,6 @@
   "api_key_pass": "",
   "default_addr": "demo.gate.kickex.com",
   "scheme": "wss",
-  "max_completed_orders": 1000,
   "pairs": [
     "KICK/USDT"
   ],

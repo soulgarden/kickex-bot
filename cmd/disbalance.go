@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/soulgarden/kickex-bot/broker"
+
 	"github.com/soulgarden/kickex-bot/dictionary"
 	"github.com/soulgarden/kickex-bot/service"
 
@@ -34,8 +36,9 @@ var disbalanceCmd = &cobra.Command{
 		}
 
 		logger := zerolog.New(os.Stdout).Level(defaultLogLevel).With().Caller().Logger()
-		eventBroker := subscriber.NewBroker()
+		eventBroker := broker.NewBroker()
 		st := storage.NewStorage()
+		wsSvc := service.NewWS(cfg, eventBroker, &logger)
 
 		interrupt := make(chan os.Signal, 1)
 		signal.Notify(interrupt, os.Interrupt)
@@ -44,8 +47,10 @@ var disbalanceCmd = &cobra.Command{
 
 		logger.Warn().Msg("starting...")
 
-		accounting := subscriber.NewAccounting(cfg, st, eventBroker, &logger)
-		pairs := subscriber.NewPairs(cfg, st, &logger)
+		go wsSvc.Start(ctx, interrupt)
+
+		accounting := subscriber.NewAccounting(cfg, st, eventBroker, wsSvc, &logger)
+		pairs := subscriber.NewPairs(cfg, st, eventBroker, wsSvc, &logger)
 
 		go pairs.Start(ctx, interrupt)
 
@@ -84,7 +89,7 @@ var disbalanceCmd = &cobra.Command{
 
 			st.RegisterOrderBook(pair)
 
-			go subscriber.NewOrderBook(cfg, st, eventBroker, pair, &logger).Start(ctx, interrupt)
+			go subscriber.NewOrderBook(cfg, st, eventBroker, wsSvc, pair, &logger).Start(ctx, interrupt)
 		}
 
 		time.Sleep(pairsWaitingDuration)

@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/soulgarden/kickex-bot/broker"
+
 	"github.com/soulgarden/kickex-bot/service"
 
 	"github.com/soulgarden/kickex-bot/dictionary"
@@ -38,14 +40,19 @@ var startCmd = &cobra.Command{
 		}
 
 		logger := zerolog.New(os.Stdout).Level(defaultLogLevel).With().Caller().Logger()
-		eventBroker := subscriber.NewBroker()
+		eventBroker := broker.NewBroker()
 		st := storage.NewStorage()
-		orderSvc := service.NewOrder(cfg, st, &logger)
+		wsSvc := service.NewWS(cfg, eventBroker, &logger)
+		orderSvc := service.NewOrder(cfg, st, eventBroker, wsSvc, &logger)
 
 		interrupt := make(chan os.Signal, 1)
 		signal.Notify(interrupt, os.Interrupt)
 
 		ctx, cancel := context.WithCancel(context.Background())
+
+		logger.Warn().Msg("starting...")
+
+		go wsSvc.Start(ctx, interrupt)
 
 		_, err := os.Stat(fmt.Sprintf(cfg.StorageDumpPath, cfg.Env))
 		if err == nil {
@@ -56,21 +63,25 @@ var startCmd = &cobra.Command{
 				logger.Fatal().Err(err).Msg("load sessions from dump")
 			}
 
+			e := os.Remove(fmt.Sprintf(cfg.StorageDumpPath, cfg.Env))
+			if e != nil {
+				logger.Fatal().Err(err).Msg("remove dump file")
+			}
+
 			if len(st.UserOrders) > 0 {
 				err = orderSvc.UpdateOrderStates(ctx, interrupt)
 				if err != nil {
 					logger.Fatal().Err(err).Msg("update orders for dumped state")
 				}
 			}
-
 		} else if !os.IsNotExist(err) {
 			logger.Fatal().Err(err).Msg("open dump file")
 		}
 
 		logger.Warn().Msg("starting...")
 
-		accounting := subscriber.NewAccounting(cfg, st, eventBroker, &logger)
-		pairs := subscriber.NewPairs(cfg, st, &logger)
+		accounting := subscriber.NewAccounting(cfg, st, eventBroker, wsSvc, &logger)
+		pairs := subscriber.NewPairs(cfg, st, eventBroker, wsSvc, &logger)
 
 		go pairs.Start(ctx, interrupt)
 
@@ -108,7 +119,7 @@ var startCmd = &cobra.Command{
 
 			st.RegisterOrderBook(pair)
 
-			go subscriber.NewOrderBook(cfg, st, eventBroker, pair, &logger).Start(ctx, interrupt)
+			go subscriber.NewOrderBook(cfg, st, eventBroker, wsSvc, pair, &logger).Start(ctx, interrupt)
 
 			spreadTrader, err := subscriber.NewSpread(
 				cfg,
@@ -116,6 +127,7 @@ var startCmd = &cobra.Command{
 				eventBroker,
 				service.NewConversion(st, &logger),
 				tgSvc,
+				wsSvc,
 				pair,
 				&logger,
 			)
@@ -144,6 +156,8 @@ var startCmd = &cobra.Command{
 
 		go func() {
 			<-interrupt
+
+			logger.Warn().Msg("interrupt signal received")
 
 			tgSvc.SendSync(fmt.Sprintf("env: %s, spread trading bot shutting down", cfg.Env))
 

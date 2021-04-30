@@ -6,66 +6,93 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"strconv"
 	"syscall"
+
+	"github.com/soulgarden/kickex-bot/broker"
 
 	"github.com/soulgarden/kickex-bot/dictionary"
 
 	"github.com/rs/zerolog"
-	"github.com/soulgarden/kickex-bot/client"
 	"github.com/soulgarden/kickex-bot/conf"
 	"github.com/soulgarden/kickex-bot/response"
 	"github.com/soulgarden/kickex-bot/storage"
 )
 
 type Order struct {
-	cfg     *conf.Bot
-	storage *storage.Storage
-	logger  *zerolog.Logger
+	cfg         *conf.Bot
+	storage     *storage.Storage
+	eventBroker *broker.Broker
+	wsSvc       *WS
+	logger      *zerolog.Logger
 }
 
-func NewOrder(cfg *conf.Bot, storage *storage.Storage, logger *zerolog.Logger) *Order {
-	return &Order{cfg: cfg, storage: storage, logger: logger}
+func NewOrder(
+	cfg *conf.Bot,
+	storage *storage.Storage,
+	eventBroker *broker.Broker,
+	wsSvc *WS,
+	logger *zerolog.Logger,
+) *Order {
+	return &Order{cfg: cfg, storage: storage, eventBroker: eventBroker, wsSvc: wsSvc, logger: logger}
 }
 
 func (s *Order) UpdateOrderStates(ctx context.Context, interrupt chan os.Signal) error {
-	cli, err := client.NewWsCli(s.cfg, interrupt, s.logger)
-	if err != nil {
-		s.logger.Err(err).Msg("connection error")
-		interrupt <- syscall.SIGSTOP
+	s.logger.Warn().Msg("order states updater starting...")
+	defer s.logger.Warn().Msg("order states updater  stopped")
 
-		return err
-	}
-
-	defer cli.Close()
-
-	err = cli.Auth()
-	if err != nil {
-		interrupt <- syscall.SIGSTOP
-
-		return err
-	}
+	eventsCh := s.eventBroker.Subscribe()
+	defer s.eventBroker.Unsubscribe(eventsCh)
 
 	oNumber := len(s.storage.UserOrders)
 	oNumberProcessed := 0
 
+	reqIds := map[string]bool{}
+
 	for _, o := range s.storage.UserOrders {
-		err := cli.GetOrder(o.ID)
+		id, err := s.wsSvc.GetOrder(o.ID)
 		if err != nil {
-			s.logger.Fatal().Err(err).Msg("get order")
+			interrupt <- syscall.SIGSTOP
+
+			s.logger.Err(err).Msg("get order")
+
+			return err
 		}
+
+		reqIds[strconv.FormatInt(id, 10)] = true
 	}
 
 	for {
 		select {
-		case msg, ok := <-cli.ReadCh:
+		case e, ok := <-eventsCh:
 			if !ok {
-				s.logger.Err(err).Msg("read channel closed")
+				interrupt <- syscall.SIGSTOP
+
+				return nil
+			}
+
+			msg, ok := e.([]byte)
+			if !ok {
+				interrupt <- syscall.SIGSTOP
+
+				return dictionary.ErrCantConvertInterfaceToBytes
+			}
+
+			rid := &response.ID{}
+
+			err := json.Unmarshal(msg, rid)
+			if err != nil {
+				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 				interrupt <- syscall.SIGSTOP
 
 				return err
 			}
 
-			err := s.checkErrorResponse(msg)
+			if _, ok := reqIds[rid.ID]; !ok {
+				continue
+			}
+
+			err = s.checkErrorResponse(msg)
 			if err != nil {
 				interrupt <- syscall.SIGSTOP
 
@@ -150,7 +177,7 @@ func (s *Order) UpdateOrderStates(ctx context.Context, interrupt chan os.Signal)
 					}
 				}
 
-				s.storage.SetUserOrder(o)
+				s.storage.UpsertUserOrder(o)
 				s.logger.Warn().Int64("oid", r.Order.ID).Msg("order state updated")
 			}
 
@@ -178,9 +205,9 @@ func (s *Order) checkErrorResponse(msg []byte) error {
 
 	if er.Error != nil {
 		if er.Error.Code == response.OrderNotFoundOrOutdated {
-			s.logger.Error().Bytes("response", msg).Msg("received order not found")
+			s.logger.Err(dictionary.ErrOrderNotFoundOrOutdated).Bytes("response", msg).Msg("received order not found")
 
-			return nil
+			return dictionary.ErrOrderNotFoundOrOutdated
 		}
 
 		err = fmt.Errorf("%w: %s", dictionary.ErrResponse, er.Error.Reason)

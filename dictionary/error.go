@@ -9,3 +9,7 @@ var ErrWsReadChannelClosed = errors.New("ws read channel closed")
 var ErrParseFloat = errors.New("parse string as float")
 
 var ErrResponse = errors.New("received response contains error")
+
+var ErrOrderNotFoundOrOutdated = errors.New("order not found or outdated")
+
+var ErrCantConvertInterfaceToBytes = errors.New("can't convert interface to bytes")
