@@ -22,30 +22,39 @@ func NewWS(cfg *conf.Bot, eventBroker *broker.Broker, logger *zerolog.Logger) *W
 	return &WS{cfg: cfg, eventBroker: eventBroker, logger: logger}
 }
 
-func (s *WS) Start(ctx context.Context, interrupt chan os.Signal) {
+func (s *WS) Connect(interrupt chan os.Signal) error {
 	var err error
 
 	s.cli, err = client.NewWsCli(s.cfg, interrupt, s.logger)
 	if err != nil {
-		s.logger.Fatal().Err(err).Msg("connection error")
-		interrupt <- syscall.SIGSTOP
-	}
+		s.logger.Err(err).Msg("connection error")
 
-	defer s.cli.Close()
+		interrupt <- syscall.SIGSTOP
+
+		return err
+	}
 
 	err = s.cli.Auth()
 	if err != nil {
 		s.logger.Err(err).Msg("auth error")
+
 		interrupt <- syscall.SIGSTOP
 
-		return
+		return err
 	}
+
+	return nil
+}
+
+func (s *WS) Start(ctx context.Context, interrupt chan os.Signal) {
+	var err error
 
 	for {
 		select {
 		case msg, ok := <-s.cli.ReadCh:
 			if !ok {
 				s.logger.Err(err).Msg("read channel closed")
+
 				interrupt <- syscall.SIGSTOP
 
 				return
@@ -81,4 +90,12 @@ func (s *WS) CancelOrder(orderID int64) (int64, error) {
 
 func (s *WS) GetOrder(orderID int64) (int64, error) {
 	return s.cli.GetOrder(orderID)
+}
+
+func (s *WS) GetBalance() (int64, error) {
+	return s.cli.GetBalance()
+}
+
+func (s *WS) Close() {
+	s.cli.Close()
 }

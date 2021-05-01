@@ -7,6 +7,8 @@ import (
 	"math/big"
 	"os"
 	"strconv"
+	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/soulgarden/kickex-bot/broker"
@@ -22,11 +24,12 @@ import (
 )
 
 type Accounting struct {
-	cfg         *conf.Bot
-	storage     *storage.Storage
-	eventBroker *broker.Broker
-	wsSvc       *service.WS
-	logger      *zerolog.Logger
+	cfg           *conf.Bot
+	storage       *storage.Storage
+	wsEventBroker *broker.Broker
+	wsSvc         *service.WS
+	balanceSvc    *service.Balance
+	logger        *zerolog.Logger
 }
 
 func NewAccounting(
@@ -34,17 +37,29 @@ func NewAccounting(
 	storage *storage.Storage,
 	eventBroker *broker.Broker,
 	wsSvc *service.WS,
+	balanceSvc *service.Balance,
 	logger *zerolog.Logger,
 ) *Accounting {
-	return &Accounting{cfg: cfg, storage: storage, eventBroker: eventBroker, wsSvc: wsSvc, logger: logger}
+	return &Accounting{
+		cfg:           cfg,
+		storage:       storage,
+		wsEventBroker: eventBroker,
+		wsSvc:         wsSvc,
+		balanceSvc:    balanceSvc,
+		logger:        logger,
+	}
 }
 
-func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal) {
+func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal, wg *sync.WaitGroup) {
+	defer func() {
+		wg.Done()
+	}()
+
 	s.logger.Warn().Msg("accounting subscriber starting...")
 	defer s.logger.Warn().Msg("accounting subscriber stopped")
 
-	eventsCh := s.eventBroker.Subscribe()
-	defer s.eventBroker.Unsubscribe(eventsCh)
+	eventsCh := s.wsEventBroker.Subscribe()
+	defer s.wsEventBroker.Unsubscribe(eventsCh)
 
 	id, err := s.wsSvc.SubscribeAccounting(false)
 	if err != nil {
@@ -58,6 +73,8 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal) {
 		select {
 		case e, ok := <-eventsCh:
 			if !ok {
+				s.logger.Warn().Msg("event channel closed")
+
 				interrupt <- syscall.SIGSTOP
 
 				return
@@ -65,6 +82,8 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal) {
 
 			msg, ok := e.([]byte)
 			if !ok {
+				s.logger.Err(dictionary.ErrCantConvertInterfaceToBytes).Msg(dictionary.ErrCantConvertInterfaceToBytes.Error())
+
 				interrupt <- syscall.SIGSTOP
 
 				return
@@ -75,6 +94,7 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal) {
 			err := json.Unmarshal(msg, rid)
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
+
 				interrupt <- syscall.SIGSTOP
 
 				return
@@ -90,6 +110,8 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal) {
 
 			err = s.checkErrorResponse(msg)
 			if err != nil {
+				s.logger.Err(err).Msg("check error response")
+
 				interrupt <- syscall.SIGSTOP
 
 				return
@@ -100,6 +122,7 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal) {
 
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
+
 				interrupt <- syscall.SIGSTOP
 
 				return
@@ -132,6 +155,7 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal) {
 					s.logger.Err(dictionary.ErrParseFloat).
 						Str("val", order.OrderedVolume).
 						Msg("parse string as float")
+
 					interrupt <- syscall.SIGSTOP
 
 					return
@@ -154,6 +178,7 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal) {
 						s.logger.Err(dictionary.ErrParseFloat).
 							Str("val", order.TotalSellVolume).
 							Msg("parse string as float")
+
 						interrupt <- syscall.SIGSTOP
 
 						return
@@ -167,6 +192,7 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal) {
 						s.logger.Err(dictionary.ErrParseFloat).
 							Str("val", order.TotalBuyVolume).
 							Msg("parse string as float")
+
 						interrupt <- syscall.SIGSTOP
 
 						return
@@ -174,15 +200,23 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal) {
 				}
 
 				s.storage.UpsertUserOrder(o)
+
+				pair := strings.Split(o.Pair, "/")
+
+				s.storage.OrderBooks[pair[0]][pair[1]].EventBroker.Publish(0) //tdo: check existence
 			}
 
-			for _, balance := range r.Balance {
-				s.storage.Balances[balance.CurrencyCode] = balance
+			err = s.balanceSvc.UpdateStorageBalances(r.Balance)
+			if err != nil {
+				s.logger.Err(err).
+					Msg("update storage balances")
+
+				interrupt <- syscall.SIGSTOP
+
+				return
 			}
 
 			s.storage.Deals = append(s.storage.Deals, r.Deals...)
-
-			s.eventBroker.Publish(0)
 		case <-ctx.Done():
 			interrupt <- syscall.SIGSTOP
 

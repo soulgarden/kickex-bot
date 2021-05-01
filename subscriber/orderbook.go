@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"os"
 	"strconv"
+	"sync"
 	"syscall"
 
 	"github.com/soulgarden/kickex-bot/broker"
@@ -36,6 +37,7 @@ func NewOrderBook(
 	eventBroker *broker.Broker,
 	wsSvc *service.WS,
 	pair *response.Pair,
+	orderBook *storage.Book,
 	logger *zerolog.Logger,
 ) *OrderBook {
 	return &OrderBook{
@@ -44,12 +46,16 @@ func NewOrderBook(
 		eventBroker: eventBroker,
 		wsSvc:       wsSvc,
 		pair:        pair,
-		orderBook:   st.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency],
+		orderBook:   orderBook,
 		logger:      logger,
 	}
 }
 
-func (s *OrderBook) Start(ctx context.Context, interrupt chan os.Signal) {
+func (s *OrderBook) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan os.Signal) {
+	defer func() {
+		wg.Done()
+	}()
+
 	s.logger.Warn().Str("pair", s.pair.GetPairName()).Msg("order book subscriber starting...")
 	defer s.logger.Warn().Str("pair", s.pair.GetPairName()).Msg("order book subscriber stopped")
 
@@ -59,6 +65,7 @@ func (s *OrderBook) Start(ctx context.Context, interrupt chan os.Signal) {
 	id, err := s.wsSvc.GetOrderBookAndSubscribe(s.pair.BaseCurrency + "/" + s.pair.QuoteCurrency)
 	if err != nil {
 		s.logger.Err(err).Msg("get order book and subscribe")
+
 		interrupt <- syscall.SIGSTOP
 
 		return
@@ -68,6 +75,8 @@ func (s *OrderBook) Start(ctx context.Context, interrupt chan os.Signal) {
 		select {
 		case e, ok := <-eventsCh:
 			if !ok {
+				s.logger.Warn().Msg("event channel closed")
+
 				interrupt <- syscall.SIGSTOP
 
 				return
@@ -75,6 +84,8 @@ func (s *OrderBook) Start(ctx context.Context, interrupt chan os.Signal) {
 
 			msg, ok := e.([]byte)
 			if !ok {
+				s.logger.Err(dictionary.ErrCantConvertInterfaceToBytes).Msg(dictionary.ErrCantConvertInterfaceToBytes.Error())
+
 				interrupt <- syscall.SIGSTOP
 
 				return
@@ -85,6 +96,7 @@ func (s *OrderBook) Start(ctx context.Context, interrupt chan os.Signal) {
 			err := json.Unmarshal(msg, rid)
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
+
 				interrupt <- syscall.SIGSTOP
 
 				return
@@ -100,6 +112,8 @@ func (s *OrderBook) Start(ctx context.Context, interrupt chan os.Signal) {
 
 			err = s.checkErrorResponse(msg)
 			if err != nil {
+				s.logger.Err(err).Msg("check error response")
+
 				interrupt <- syscall.SIGSTOP
 
 				return
@@ -136,7 +150,7 @@ func (s *OrderBook) Start(ctx context.Context, interrupt chan os.Signal) {
 
 			s.updateSpread()
 
-			s.eventBroker.Publish(0)
+			s.orderBook.EventBroker.Publish(0)
 		case <-ctx.Done():
 			return
 		}

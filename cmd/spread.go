@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/soulgarden/kickex-bot/strategy"
+
 	"github.com/soulgarden/kickex-bot/broker"
 
 	"github.com/soulgarden/kickex-bot/service"
@@ -22,13 +24,13 @@ import (
 )
 
 const (
-	ShutDownDuration = time.Second * 10
+	ShutDownDuration = time.Second * 15
 	cleanupInterval  = time.Minute * 10
 )
 
 //nolint: gochecknoglobals
-var startCmd = &cobra.Command{
-	Use:   "bot",
+var spreadCmd = &cobra.Command{
+	Use:   "spread",
 	Short: "Start spread trade bot for kickex exchange ",
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -40,21 +42,58 @@ var startCmd = &cobra.Command{
 		}
 
 		logger := zerolog.New(os.Stdout).Level(defaultLogLevel).With().Caller().Logger()
-		eventBroker := broker.NewBroker()
+		wsEventBroker := broker.NewBroker()
 		st := storage.NewStorage()
-		wsSvc := service.NewWS(cfg, eventBroker, &logger)
-		orderSvc := service.NewOrder(cfg, st, eventBroker, wsSvc, &logger)
+		wsSvc := service.NewWS(cfg, wsEventBroker, &logger)
+		orderSvc := service.NewOrder(cfg, st, wsEventBroker, wsSvc, &logger)
+		balanceSvc := service.NewBalance(st, wsEventBroker, wsSvc, &logger)
 
-		interrupt := make(chan os.Signal, 1)
+		interrupt := make(chan os.Signal, 100)
 		signal.Notify(interrupt, os.Interrupt)
 
 		ctx, cancel := context.WithCancel(context.Background())
 
 		logger.Warn().Msg("starting...")
 
-		go wsSvc.Start(ctx, interrupt)
+		tgSvc, err := service.NewTelegram(cfg, &logger)
+		if err != nil {
+			logger.Err(err).Msg("new tg")
 
-		_, err := os.Stat(fmt.Sprintf(cfg.StorageDumpPath, cfg.Env))
+			cancel()
+
+			return
+		}
+
+		go tgSvc.Start()
+
+		tgSvc.Send(fmt.Sprintf("env: %s, spread trading bot starting", cfg.Env))
+		defer tgSvc.SendSync(fmt.Sprintf("env: %s, spread trading bot shutting down", cfg.Env))
+
+		go func() {
+			<-interrupt
+
+			logger.Warn().Msg("interrupt signal received")
+
+			cancel()
+
+			<-time.After(ShutDownDuration)
+
+			logger.Warn().Msg("killed by shutdown timeout")
+
+			os.Exit(1)
+		}()
+
+		err = wsSvc.Connect(interrupt)
+		if err != nil {
+			logger.Err(err).Msg("ws connect")
+
+			os.Exit(1)
+		}
+
+		go wsSvc.Start(ctx, interrupt)
+		go wsEventBroker.Start()
+
+		_, err = os.Stat(fmt.Sprintf(cfg.StorageDumpPath, cfg.Env))
 		if err == nil {
 			logger.Warn().Msg("load sessions from dump file")
 
@@ -68,8 +107,8 @@ var startCmd = &cobra.Command{
 				logger.Fatal().Err(err).Msg("remove dump file")
 			}
 
-			if len(st.UserOrders) > 0 {
-				err = orderSvc.UpdateOrderStates(ctx, interrupt)
+			if len(st.GetUserOrders()) > 0 {
+				err = orderSvc.UpdateOrdersStates(ctx, interrupt)
 				if err != nil {
 					logger.Fatal().Err(err).Msg("update orders for dumped state")
 				}
@@ -80,29 +119,23 @@ var startCmd = &cobra.Command{
 
 		logger.Warn().Msg("starting...")
 
-		accounting := subscriber.NewAccounting(cfg, st, eventBroker, wsSvc, &logger)
-		pairs := subscriber.NewPairs(cfg, st, eventBroker, wsSvc, &logger)
+		err = balanceSvc.GetBalance(ctx, interrupt)
+		if err != nil {
+			logger.Fatal().Err(err).Msg("get balance")
+		}
 
-		go pairs.Start(ctx, interrupt)
+		accounting := subscriber.NewAccounting(cfg, st, wsEventBroker, wsSvc, balanceSvc, &logger)
+		pairs := subscriber.NewPairs(cfg, st, wsEventBroker, wsSvc, &logger)
+
+		var wg sync.WaitGroup
+
+		wg.Add(1)
+		go pairs.Start(ctx, interrupt, &wg)
 
 		time.Sleep(pairsWaitingDuration) // wait for pairs filling
 
-		tgSvc, err := service.NewTelegram(cfg, &logger)
-		if err != nil {
-			logger.Err(err).Msg("new tg")
-
-			cancel()
-
-			return
-		}
-
-		tgSvc.Send(fmt.Sprintf("env: %s, spread trading bot starting", cfg.Env))
-
-		go tgSvc.Start()
-		go eventBroker.Start()
-		go accounting.Start(ctx, interrupt)
-
-		var wg sync.WaitGroup
+		wg.Add(1)
+		go accounting.Start(ctx, interrupt, &wg)
 
 		for _, pairName := range cfg.Pairs {
 			pair := st.GetPair(pairName)
@@ -117,18 +150,23 @@ var startCmd = &cobra.Command{
 				break
 			}
 
-			st.RegisterOrderBook(pair)
+			orderBookEventBroker := broker.NewBroker()
+			go orderBookEventBroker.Start()
 
-			go subscriber.NewOrderBook(cfg, st, eventBroker, wsSvc, pair, &logger).Start(ctx, interrupt)
+			orderBook := st.RegisterOrderBook(pair, orderBookEventBroker)
 
-			spreadTrader, err := subscriber.NewSpread(
+			wg.Add(1)
+			go subscriber.NewOrderBook(cfg, st, wsEventBroker, wsSvc, pair, orderBook, &logger).Start(ctx, &wg, interrupt)
+
+			spreadTrader, err := strategy.NewSpread(
 				cfg,
 				st,
-				eventBroker,
+				wsEventBroker,
 				service.NewConversion(st, &logger),
 				tgSvc,
 				wsSvc,
 				pair,
+				orderBook,
 				&logger,
 			)
 			if err != nil {
@@ -154,21 +192,9 @@ var startCmd = &cobra.Command{
 			}
 		}()
 
-		go func() {
-			<-interrupt
-
-			logger.Warn().Msg("interrupt signal received")
-
-			tgSvc.SendSync(fmt.Sprintf("env: %s, spread trading bot shutting down", cfg.Env))
-
-			cancel()
-
-			<-time.After(ShutDownDuration)
-
-			os.Exit(1)
-		}()
-
 		wg.Wait()
+
+		wsSvc.Close()
 
 		err = st.DumpSessions(fmt.Sprintf(cfg.StorageDumpPath, cfg.Env))
 		logger.Err(err).Msg("dump sessions to file")

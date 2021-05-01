@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/soulgarden/kickex-bot/strategy"
+
 	"github.com/soulgarden/kickex-bot/broker"
 
 	"github.com/soulgarden/kickex-bot/dictionary"
@@ -36,9 +38,10 @@ var disbalanceCmd = &cobra.Command{
 		}
 
 		logger := zerolog.New(os.Stdout).Level(defaultLogLevel).With().Caller().Logger()
-		eventBroker := broker.NewBroker()
+		wsEventBroker := broker.NewBroker()
 		st := storage.NewStorage()
-		wsSvc := service.NewWS(cfg, eventBroker, &logger)
+		wsSvc := service.NewWS(cfg, wsEventBroker, &logger)
+		balanceSvc := service.NewBalance(st, wsEventBroker, wsSvc, &logger)
 
 		interrupt := make(chan os.Signal, 1)
 		signal.Notify(interrupt, os.Interrupt)
@@ -47,12 +50,24 @@ var disbalanceCmd = &cobra.Command{
 
 		logger.Warn().Msg("starting...")
 
+		err := wsSvc.Connect(interrupt)
+		if err != nil {
+			logger.Err(err).Msg("ws connect")
+
+			os.Exit(1)
+		}
+
 		go wsSvc.Start(ctx, interrupt)
+		go wsEventBroker.Start()
 
-		accounting := subscriber.NewAccounting(cfg, st, eventBroker, wsSvc, &logger)
-		pairs := subscriber.NewPairs(cfg, st, eventBroker, wsSvc, &logger)
+		accounting := subscriber.NewAccounting(cfg, st, wsEventBroker, wsSvc, balanceSvc, &logger)
+		pairs := subscriber.NewPairs(cfg, st, wsEventBroker, wsSvc, &logger)
 
-		go pairs.Start(ctx, interrupt)
+		var wg sync.WaitGroup
+
+		wg.Add(1)
+
+		go pairs.Start(ctx, interrupt, &wg)
 
 		time.Sleep(pairsWaitingDuration) // wait for pairs filling
 
@@ -65,14 +80,13 @@ var disbalanceCmd = &cobra.Command{
 			return
 		}
 
+		go tgSvc.Start()
+
 		tgSvc.Send(fmt.Sprintf("env: %s, disbalance bot starting", cfg.Env))
 
-		go tgSvc.Start()
-		go eventBroker.Start()
-		go accounting.Start(ctx, interrupt)
+		go accounting.Start(ctx, interrupt, &wg)
 
-		var wg sync.WaitGroup
-		dis := subscriber.NewDisbalance(cfg, st, eventBroker, service.NewConversion(st, &logger), tgSvc, &logger)
+		dis := strategy.NewDisbalance(cfg, st, wsEventBroker, service.NewConversion(st, &logger), tgSvc, &logger)
 
 		for _, pairName := range cfg.TrackingPairs {
 			pair := st.GetPair(pairName)
@@ -87,12 +101,14 @@ var disbalanceCmd = &cobra.Command{
 				break
 			}
 
-			st.RegisterOrderBook(pair)
+			orderBookEventBroker := broker.NewBroker()
+			go orderBookEventBroker.Start()
 
-			go subscriber.NewOrderBook(cfg, st, eventBroker, wsSvc, pair, &logger).Start(ctx, interrupt)
+			orderBook := st.RegisterOrderBook(pair, orderBookEventBroker)
+
+			wg.Add(1)
+			go subscriber.NewOrderBook(cfg, st, wsEventBroker, wsSvc, pair, orderBook, &logger).Start(ctx, &wg, interrupt)
 		}
-
-		time.Sleep(pairsWaitingDuration)
 
 		wg.Add(1)
 		go dis.Start(ctx, &wg, interrupt)
@@ -110,6 +126,8 @@ var disbalanceCmd = &cobra.Command{
 		}()
 
 		wg.Wait()
+
+		wsSvc.Close()
 
 		logger.Warn().Msg("shutting down...")
 	},

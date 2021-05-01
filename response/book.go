@@ -35,15 +35,6 @@ type AccountingUpdates struct {
 	Deals   []*Deal            `json:"deals"`
 }
 
-type Balance struct {
-	CurrencyCode string `json:"currencyCode"`
-	CurrencyName string `json:"currencyName"`
-	Available    string `json:"available"`
-	Reserved     string `json:"reserved"`
-	Total        string `json:"total"`
-	Account      int    `json:"account"`
-}
-
 type AccountingOrder struct {
 	ID               int64  `json:"id"`
 	TradeTimestamp   string `json:"tradeTimestamp"`

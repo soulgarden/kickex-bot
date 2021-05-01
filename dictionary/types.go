@@ -9,4 +9,5 @@ const (
 	CreateTradeOrder         = "createTradeOrder"
 	CancelOrder              = "cancelOrder"
 	GetOrder                 = "getOrder"
+	GetBalance               = "getBalance"
 )

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"sync"
 	"syscall"
 
 	"github.com/soulgarden/kickex-bot/broker"
@@ -36,7 +37,11 @@ func NewPairs(
 	return &Pairs{cfg: cfg, storage: storage, eventBroker: eventBroker, wsSvc: wsSvc, logger: logger}
 }
 
-func (s *Pairs) Start(ctx context.Context, interrupt chan os.Signal) {
+func (s *Pairs) Start(ctx context.Context, interrupt chan os.Signal, wg *sync.WaitGroup) {
+	defer func() {
+		wg.Done()
+	}()
+
 	s.logger.Warn().Msg("pairs subscriber starting...")
 	defer s.logger.Warn().Msg("pairs subscriber stopped")
 
@@ -46,6 +51,7 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan os.Signal) {
 	id, err := s.wsSvc.GetPairsAndSubscribe()
 	if err != nil {
 		s.logger.Err(err).Msg("get pairs and subscribe")
+
 		interrupt <- syscall.SIGSTOP
 
 		return
@@ -55,6 +61,8 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan os.Signal) {
 		select {
 		case e, ok := <-eventsCh:
 			if !ok {
+				s.logger.Warn().Msg("event channel closed")
+
 				interrupt <- syscall.SIGSTOP
 
 				return
@@ -62,6 +70,8 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan os.Signal) {
 
 			msg, ok := e.([]byte)
 			if !ok {
+				s.logger.Err(dictionary.ErrCantConvertInterfaceToBytes).Msg(dictionary.ErrCantConvertInterfaceToBytes.Error())
+
 				interrupt <- syscall.SIGSTOP
 
 				return
@@ -72,6 +82,7 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan os.Signal) {
 
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
+
 				interrupt <- syscall.SIGSTOP
 
 				return
@@ -83,6 +94,8 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan os.Signal) {
 
 			err = s.checkErrorResponse(msg)
 			if err != nil {
+				s.logger.Err(err).Msg("check error response")
+
 				interrupt <- syscall.SIGSTOP
 
 				return
@@ -93,6 +106,7 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan os.Signal) {
 			err = json.Unmarshal(msg, r)
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
+
 				interrupt <- syscall.SIGSTOP
 
 				return
