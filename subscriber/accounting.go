@@ -203,7 +203,11 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal, wg *sy
 
 				pair := strings.Split(o.Pair, "/")
 
-				s.storage.OrderBooks[pair[0]][pair[1]].EventBroker.Publish(0) //tdo: check existence
+				if v, ok := s.storage.OrderBooks[pair[0]]; ok {
+					if _, ok := v[pair[1]]; ok {
+						v[pair[1]].EventBroker.Publish(0)
+					}
+				}
 			}
 
 			err = s.balanceSvc.UpdateStorageBalances(r.Balance)
