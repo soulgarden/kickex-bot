@@ -4,7 +4,7 @@ type CreateOrder struct {
 	ID         string             `json:"id"`
 	Type       string             `json:"type"`
 	Fields     *CreateOrderFields `json:"fields"`
-	ExternalID string             `json:"externalId"`
+	ExternalID string             `json:"externalId,omitempty"`
 }
 
 type CreateOrderFields struct {

@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
+	"sync"
 	"syscall"
 
+	"github.com/soulgarden/kickex-bot/broker"
+	"github.com/soulgarden/kickex-bot/service"
+
 	"github.com/rs/zerolog"
-	"github.com/soulgarden/kickex-bot/client"
 	"github.com/soulgarden/kickex-bot/conf"
 	"github.com/soulgarden/kickex-bot/dictionary"
 	"github.com/soulgarden/kickex-bot/response"
@@ -16,31 +20,38 @@ import (
 )
 
 type Pairs struct {
-	cfg     *conf.Bot
-	storage *storage.Storage
-	logger  *zerolog.Logger
+	cfg         *conf.Bot
+	storage     *storage.Storage
+	eventBroker *broker.Broker
+	wsSvc       *service.WS
+	logger      *zerolog.Logger
 }
 
-func NewPairs(cfg *conf.Bot, storage *storage.Storage, logger *zerolog.Logger) *Pairs {
-	return &Pairs{cfg: cfg, storage: storage, logger: logger}
+func NewPairs(
+	cfg *conf.Bot,
+	storage *storage.Storage,
+	eventBroker *broker.Broker,
+	wsSvc *service.WS,
+	logger *zerolog.Logger,
+) *Pairs {
+	return &Pairs{cfg: cfg, storage: storage, eventBroker: eventBroker, wsSvc: wsSvc, logger: logger}
 }
 
-func (s *Pairs) Start(ctx context.Context, interrupt chan os.Signal) {
+func (s *Pairs) Start(ctx context.Context, interrupt chan os.Signal, wg *sync.WaitGroup) {
+	defer func() {
+		wg.Done()
+	}()
+
 	s.logger.Warn().Msg("pairs subscriber starting...")
+	defer s.logger.Warn().Msg("pairs subscriber stopped")
 
-	cli, err := client.NewWsCli(s.cfg, interrupt, s.logger)
-	if err != nil {
-		s.logger.Err(err).Msg("connection error")
-		interrupt <- syscall.SIGSTOP
+	eventsCh := s.eventBroker.Subscribe()
+	defer s.eventBroker.Unsubscribe(eventsCh)
 
-		return
-	}
-
-	defer cli.Close()
-
-	err = cli.GetPairsAndSubscribe()
+	id, err := s.wsSvc.GetPairsAndSubscribe()
 	if err != nil {
 		s.logger.Err(err).Msg("get pairs and subscribe")
+
 		interrupt <- syscall.SIGSTOP
 
 		return
@@ -48,18 +59,43 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan os.Signal) {
 
 	for {
 		select {
-		case msg, ok := <-cli.ReadCh:
+		case e, ok := <-eventsCh:
 			if !ok {
-				s.logger.Err(dictionary.ErrWsReadChannelClosed).Msg("read channel closed")
+				s.logger.Warn().Msg("event channel closed")
+
 				interrupt <- syscall.SIGSTOP
 
 				return
 			}
 
-			s.logger.Debug().Bytes("payload", msg).Msg("got message")
+			msg, ok := e.([]byte)
+			if !ok {
+				s.logger.Err(dictionary.ErrCantConvertInterfaceToBytes).Msg(dictionary.ErrCantConvertInterfaceToBytes.Error())
 
-			err := s.checkErrorResponse(msg)
+				interrupt <- syscall.SIGSTOP
+
+				return
+			}
+
+			rid := &response.ID{}
+			err := json.Unmarshal(msg, rid)
+
 			if err != nil {
+				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
+
+				interrupt <- syscall.SIGSTOP
+
+				return
+			}
+
+			if strconv.FormatInt(id, 10) != rid.ID {
+				continue
+			}
+
+			err = s.checkErrorResponse(msg)
+			if err != nil {
+				s.logger.Err(err).Msg("check error response")
+
 				interrupt <- syscall.SIGSTOP
 
 				return
@@ -70,6 +106,7 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan os.Signal) {
 			err = json.Unmarshal(msg, r)
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
+
 				interrupt <- syscall.SIGSTOP
 
 				return

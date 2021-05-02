@@ -3,7 +3,6 @@
   "api_key_pass": "",
   "default_addr": "demo.gate.kickex.com",
   "scheme": "wss",
-  "max_completed_orders": 1000,
   "pairs": [
     "KICK/USDT"
   ],
@@ -14,10 +13,10 @@
     "KICK/TRX"
   ],
   "spread_for_start_buy": "3",
-  "spread_for_start_sell": "3",
-  "spread_for_stop_buy_trade": "1.5",
-  "spread_for_stop_sell_trade": "0.6",
-  "total_buy_in_usdt": "15",
+  "spread_for_start_sell": "0.8",
+  "spread_for_stop_buy_trade": "1.7",
+  "spread_for_stop_sell_trade": "0.4",
+  "total_buy_in_usdt": "20",
   "telegram": {
     "token": "",
     "chat_id": 0

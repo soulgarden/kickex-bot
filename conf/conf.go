@@ -14,8 +14,6 @@ type Bot struct {
 	DefaultAddr string `json:"default_addr" default:"demo.gate.kickex.com"`
 	Scheme      string `json:"scheme"       default:"wss"`
 
-	MaxCompletedOrders int64 `json:"max_completed_orders"`
-
 	Pairs         []string `json:"pairs"          required:"true"`
 	TrackingPairs []string `json:"tracking_pairs" required:"true"`
 
@@ -42,7 +40,7 @@ func New() *Bot {
 	path := os.Getenv("CFG_PATH")
 
 	if path == "" {
-		path = "./conf/conf.json"
+		path = "./conf/conf.local.json"
 	}
 
 	if err := configor.New(&configor.Config{ErrorOnUnmatchedKeys: true}).Load(c, path); err != nil {

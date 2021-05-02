@@ -45,21 +45,3 @@ func (s *Conversion) GetUSDTPrice(currency string) (*big.Float, error) {
 
 	return quotedToUSDTPrice, nil
 }
-
-func (s *Conversion) GetTotalBuyVolume(usdtAmount, currency string) (*big.Float, error) {
-	totalBuyInUSDT, ok := big.NewFloat(0).SetString(usdtAmount)
-	if !ok {
-		s.logger.Err(dictionary.ErrParseFloat).Str("val", usdtAmount).Msg("parse string as float")
-
-		return nil, dictionary.ErrParseFloat
-	}
-
-	quotedToUSDTPrices, err := s.GetUSDTPrice(currency)
-	if err != nil {
-		return nil, err
-	}
-
-	totalBuyVolumeInQuoted := big.NewFloat(0).Quo(totalBuyInUSDT, quotedToUSDTPrices)
-
-	return totalBuyVolumeInQuoted, nil
-}

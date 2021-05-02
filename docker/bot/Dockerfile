@@ -15,4 +15,4 @@ RUN addgroup -S www-data \
 
 COPY --from=builder --chown=www-data /bin/bot /bin/bot
 
-CMD ["/bin/bot", "bot"]
+CMD ["/bin/bot", "spread"]

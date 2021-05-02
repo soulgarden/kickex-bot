@@ -6,12 +6,16 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"strconv"
+	"sync"
 	"syscall"
+
+	"github.com/soulgarden/kickex-bot/broker"
+	"github.com/soulgarden/kickex-bot/service"
 
 	"github.com/soulgarden/kickex-bot/dictionary"
 
 	"github.com/rs/zerolog"
-	"github.com/soulgarden/kickex-bot/client"
 	"github.com/soulgarden/kickex-bot/conf"
 	"github.com/soulgarden/kickex-bot/response"
 	"github.com/soulgarden/kickex-bot/storage"
@@ -21,7 +25,8 @@ type OrderBook struct {
 	cfg         *conf.Bot
 	pair        *response.Pair
 	storage     *storage.Storage
-	eventBroker *Broker
+	eventBroker *broker.Broker
+	wsSvc       *service.WS
 	orderBook   *storage.Book
 	logger      *zerolog.Logger
 }
@@ -29,36 +34,38 @@ type OrderBook struct {
 func NewOrderBook(
 	cfg *conf.Bot,
 	st *storage.Storage,
-	eventBroker *Broker,
+	eventBroker *broker.Broker,
+	wsSvc *service.WS,
 	pair *response.Pair,
+	orderBook *storage.Book,
 	logger *zerolog.Logger,
 ) *OrderBook {
 	return &OrderBook{
 		cfg:         cfg,
 		storage:     st,
 		eventBroker: eventBroker,
+		wsSvc:       wsSvc,
 		pair:        pair,
-		orderBook:   st.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency],
+		orderBook:   orderBook,
 		logger:      logger,
 	}
 }
 
-func (s *OrderBook) Start(ctx context.Context, interrupt chan os.Signal) {
+func (s *OrderBook) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan os.Signal) {
+	defer func() {
+		wg.Done()
+	}()
+
 	s.logger.Warn().Str("pair", s.pair.GetPairName()).Msg("order book subscriber starting...")
+	defer s.logger.Warn().Str("pair", s.pair.GetPairName()).Msg("order book subscriber stopped")
 
-	cli, err := client.NewWsCli(s.cfg, interrupt, s.logger)
-	if err != nil {
-		s.logger.Err(err).Msg("connection error")
-		interrupt <- syscall.SIGSTOP
+	eventsCh := s.eventBroker.Subscribe()
+	defer s.eventBroker.Unsubscribe(eventsCh)
 
-		return
-	}
-
-	defer cli.Close()
-
-	err = cli.GetOrderBookAndSubscribe(s.pair.BaseCurrency + "/" + s.pair.QuoteCurrency)
+	id, err := s.wsSvc.GetOrderBookAndSubscribe(s.pair.BaseCurrency + "/" + s.pair.QuoteCurrency)
 	if err != nil {
 		s.logger.Err(err).Msg("get order book and subscribe")
+
 		interrupt <- syscall.SIGSTOP
 
 		return
@@ -66,20 +73,47 @@ func (s *OrderBook) Start(ctx context.Context, interrupt chan os.Signal) {
 
 	for {
 		select {
-		case msg, ok := <-cli.ReadCh:
+		case e, ok := <-eventsCh:
 			if !ok {
-				s.logger.Err(err).Msg("read channel closed")
+				s.logger.Warn().Msg("event channel closed")
+
 				interrupt <- syscall.SIGSTOP
 
 				return
+			}
+
+			msg, ok := e.([]byte)
+			if !ok {
+				s.logger.Err(dictionary.ErrCantConvertInterfaceToBytes).Msg(dictionary.ErrCantConvertInterfaceToBytes.Error())
+
+				interrupt <- syscall.SIGSTOP
+
+				return
+			}
+
+			rid := &response.ID{}
+
+			err := json.Unmarshal(msg, rid)
+			if err != nil {
+				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
+
+				interrupt <- syscall.SIGSTOP
+
+				return
+			}
+
+			if strconv.FormatInt(id, 10) != rid.ID {
+				continue
 			}
 
 			r := &response.BookResponse{}
 
 			s.logger.Debug().Bytes("payload", msg).Msg("got message")
 
-			err := s.checkErrorResponse(msg)
+			err = s.checkErrorResponse(msg)
 			if err != nil {
+				s.logger.Err(err).Msg("check error response")
+
 				interrupt <- syscall.SIGSTOP
 
 				return
@@ -116,7 +150,7 @@ func (s *OrderBook) Start(ctx context.Context, interrupt chan os.Signal) {
 
 			s.updateSpread()
 
-			s.eventBroker.Publish(0)
+			s.orderBook.EventBroker.Publish(0)
 		case <-ctx.Done():
 			return
 		}

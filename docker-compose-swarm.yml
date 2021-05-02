@@ -3,21 +3,21 @@ version: '3'
 services:
   disbalance:
     container_name: disbalance
-    image: soulgarden/kickex-bot:1.0.29
+    image: soulgarden/kickex-bot:1.0.33
     environment:
-      CFG_PATH: /conf.json
+      CFG_PATH: /conf.local.json
     stop_signal: SIGINT
     volumes:
-      - ./conf/conf.remote.json:/conf.json
+      - ./conf/conf.remote.json:/conf.local.json
       - ./storage:/storage
     command: [ "/bin/bot", "disbalance" ]
 
   spread:
     container_name: spread
-    image: soulgarden/kickex-bot:1.0.29
+    image: soulgarden/kickex-bot:1.0.33
     environment:
-      CFG_PATH: /conf.json
+      CFG_PATH: /conf.local.json
     stop_signal: SIGINT
     volumes:
-      - ./conf/conf.remote.json:/conf.json
+      - ./conf/conf.remote.json:/conf.local.json
       - ./storage:/storage

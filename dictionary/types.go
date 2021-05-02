@@ -7,6 +7,8 @@ const (
 	GetOrderBookAndSubscribe = "getOrderBookAndSubscribe"
 	GetPairsAndSubscribe     = "getPairsAndSubscribe"
 	CreateTradeOrder         = "createTradeOrder"
+	AlterTradeOrder          = "alterTradeOrder"
 	CancelOrder              = "cancelOrder"
 	GetOrder                 = "getOrder"
+	GetBalance               = "getBalance"
 )

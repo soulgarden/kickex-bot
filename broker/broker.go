@@ -1,4 +1,4 @@
-package subscriber
+package broker
 
 const eventChSize = 1024
 

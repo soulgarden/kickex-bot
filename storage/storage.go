@@ -7,6 +7,9 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
+
+	"github.com/soulgarden/kickex-bot/broker"
 
 	uuid "github.com/satori/go.uuid"
 	"github.com/tevino/abool"
@@ -22,11 +25,23 @@ type Storage struct {
 
 	userOrdersMx sync.RWMutex
 	UserOrders   map[int64]*Order
-	Balances     map[string]*response.Balance
-	Deals        []*response.Deal
+
+	balanceMx sync.RWMutex
+	balances  map[string]*Balance
+
+	Deals []*response.Deal
 
 	orderBooksMx sync.RWMutex
 	OrderBooks   map[string]map[string]*Book `json:"order_books"` // base/quoted
+}
+
+type Balance struct {
+	CurrencyCode string
+	CurrencyName string
+	Available    *big.Float
+	Reserved     *big.Float
+	Total        *big.Float
+	Account      int
 }
 
 type Book struct {
@@ -44,6 +59,8 @@ type Book struct {
 
 	bids map[string]*BookOrder
 	asks map[string]*BookOrder
+
+	EventBroker *broker.Broker
 }
 
 type BookOrder struct {
@@ -55,12 +72,17 @@ type BookOrder struct {
 }
 
 type Session struct {
-	ID               string `json:"id"`
-	ActiveBuyOrderID int64  `json:"active_buy_order_id"`
-	PrevBuyOrderID   int64  `json:"prev_buy_order_id"`
+	ID string `json:"id"`
 
-	ActiveSellOrderID int64 `json:"active_sell_order_id"`
-	PrevSellOrderID   int64 `json:"prev_sell_order_id"`
+	ActiveBuyExtOrderID    int64             `json:"active_buy_ext_order_id"`
+	ActiveBuyOrderID       int64             `json:"active_buy_order_id"`
+	PrevBuyOrderID         int64             `json:"prev_buy_order_id"`
+	IsNeedToCreateBuyOrder *abool.AtomicBool `json:"is_need_to_create_buy_order"`
+
+	ActiveSellExtOrderID    int64             `json:"active_sell_order_id"`
+	ActiveSellOrderID       int64             `json:"active_sell_ext_order_id"`
+	PrevSellOrderID         int64             `json:"prev_sell_order_id"`
+	IsNeedToCreateSellOrder *abool.AtomicBool `json:"is_need_to_create_sell_order"`
 
 	BuyOrders  map[int64]int64 `json:"buy_orders"`
 	SellOrders map[int64]int64 `json:"sell_orders"`
@@ -98,13 +120,13 @@ func NewStorage() *Storage {
 		pairMx:     sync.RWMutex{},
 		pairs:      make(map[string]*response.Pair),
 		UserOrders: map[int64]*Order{},
-		Balances:   map[string]*response.Balance{},
+		balances:   map[string]*Balance{},
 		Deals:      []*response.Deal{},
 		OrderBooks: make(map[string]map[string]*Book),
 	}
 }
 
-func (s *Storage) RegisterOrderBook(pair *response.Pair) {
+func (s *Storage) RegisterOrderBook(pair *response.Pair, eventBroker *broker.Broker) *Book {
 	s.orderBooksMx.Lock()
 	defer s.orderBooksMx.Unlock()
 
@@ -124,6 +146,7 @@ func (s *Storage) RegisterOrderBook(pair *response.Pair) {
 			CompletedSellOrders: 0,
 			bids:                make(map[string]*BookOrder),
 			asks:                make(map[string]*BookOrder),
+			EventBroker:         eventBroker,
 		}
 	} else { // loaded from dump
 		book := s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency]
@@ -133,7 +156,29 @@ func (s *Storage) RegisterOrderBook(pair *response.Pair) {
 		book.Spread = &big.Float{}
 		book.bids = make(map[string]*BookOrder)
 		book.asks = make(map[string]*BookOrder)
+		book.EventBroker = eventBroker
 	}
+
+	return s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency]
+}
+
+func (s *Storage) GetBalance(currency string) *Balance {
+	s.balanceMx.RLock()
+	defer s.balanceMx.RUnlock()
+
+	balance, ok := s.balances[currency]
+	if !ok {
+		return nil
+	}
+
+	return balance
+}
+
+func (s *Storage) UpsertBalance(currency string, balance *Balance) {
+	s.balanceMx.Lock()
+	defer s.balanceMx.Unlock()
+
+	s.balances[currency] = balance
 }
 
 func (s *Storage) GetUserOrder(id int64) *Order {
@@ -148,7 +193,14 @@ func (s *Storage) GetUserOrder(id int64) *Order {
 	return order
 }
 
-func (s *Storage) SetUserOrder(order *Order) {
+func (s *Storage) GetUserOrders() map[int64]*Order {
+	s.userOrdersMx.RLock()
+	defer s.userOrdersMx.RUnlock()
+
+	return s.UserOrders
+}
+
+func (s *Storage) UpsertUserOrder(order *Order) {
 	s.userOrdersMx.Lock()
 	defer s.userOrdersMx.Unlock()
 
@@ -180,21 +232,52 @@ func (b *Book) NewSession() *Session {
 	b.mx.Lock()
 	defer b.mx.Unlock()
 
-	id := uuid.NewV4().String()
 	session := &Session{
-		ID:                id,
-		ActiveBuyOrderID:  0,
-		PrevBuyOrderID:    0,
-		ActiveSellOrderID: 0,
-		PrevSellOrderID:   0,
-		BuyOrders:         map[int64]int64{},
-		SellOrders:        map[int64]int64{},
-		IsDone:            abool.New(),
+		ID:                      "",
+		ActiveBuyExtOrderID:     0,
+		ActiveBuyOrderID:        0,
+		PrevBuyOrderID:          0,
+		IsNeedToCreateBuyOrder:  abool.New(),
+		ActiveSellExtOrderID:    0,
+		ActiveSellOrderID:       0,
+		PrevSellOrderID:         0,
+		IsNeedToCreateSellOrder: abool.New(),
+
+		BuyOrders:  map[int64]int64{},
+		SellOrders: map[int64]int64{},
+		IsDone:     abool.New(),
 	}
 
-	b.Sessions[id] = session
+	session.ID = uuid.NewV4().String()
+	session.IsNeedToCreateBuyOrder.Set()
+
+	b.Sessions[session.ID] = session
 
 	return session
+}
+
+func (s *Session) GetPrevBuyOrderID() int64 {
+	return atomic.LoadInt64(&s.PrevBuyOrderID)
+}
+
+func (s *Session) GetPrevSellOrderID() int64 {
+	return atomic.LoadInt64(&s.PrevSellOrderID)
+}
+
+func (s *Session) GetActiveBuyOrderID() int64 {
+	return atomic.LoadInt64(&s.ActiveBuyOrderID)
+}
+
+func (s *Session) GetActiveSellOrderID() int64 {
+	return atomic.LoadInt64(&s.ActiveSellOrderID)
+}
+
+func (s *Session) IsProcessingBuyOrder() bool {
+	return atomic.LoadInt64(&s.ActiveBuyOrderID) == 0 && atomic.LoadInt64(&s.ActiveBuyExtOrderID) == 0
+}
+
+func (s *Session) IsProcessingSellOrder() bool {
+	return atomic.LoadInt64(&s.ActiveSellOrderID) == 0 && atomic.LoadInt64(&s.ActiveSellExtOrderID) == 0
 }
 
 func (s *Storage) AddBuyOrder(pair *response.Pair, sid string, oid int64) {
@@ -427,7 +510,7 @@ func (s *Storage) DumpSessions(path string) error {
 		return err
 	}
 
-	err = ioutil.WriteFile(path, marshalled, 0644)
+	err = ioutil.WriteFile(path, marshalled, 0600)
 
 	return err
 }

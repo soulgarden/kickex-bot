@@ -123,6 +123,7 @@ func (c *Client) write(interrupt chan os.Signal) {
 					Int("type", msg.Type).
 					Bytes("body", msg.Payload).
 					Msg("ping failed, interrupt")
+
 				interrupt <- syscall.SIGSTOP
 			}
 		}
@@ -154,10 +155,10 @@ func (c *Client) Close() {
 }
 
 func (c *Client) authorize(apiKey, apiKeyPass string) error {
-	atomic.AddInt64(&c.id, 1)
+	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.Auth{
-		ID:       strconv.FormatInt(c.id, 10),
+		ID:       strconv.FormatInt(id, 10),
 		Type:     dictionary.AuthType,
 		APIKey:   apiKey,
 		Password: apiKeyPass,
@@ -167,58 +168,58 @@ func (c *Client) authorize(apiKey, apiKeyPass string) error {
 }
 
 // nolint: unused
-func (c *Client) getUserOpenOrders(pair string) error {
-	atomic.AddInt64(&c.id, 1)
+func (c *Client) getUserOpenOrders(pair string) (int64, error) {
+	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.GetUsersOpenOrders{
-		ID:   strconv.FormatInt(c.id, 10),
+		ID:   strconv.FormatInt(id, 10),
 		Type: dictionary.GetUsersOpenOrders,
 		Pair: pair,
 	}
 
-	return c.sendMessage(body)
+	return id, c.sendMessage(body)
 }
 
-func (c *Client) SubscribeAccounting(includeDeals bool) error {
-	atomic.AddInt64(&c.id, 1)
+func (c *Client) SubscribeAccounting(includeDeals bool) (int64, error) {
+	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.SubscribeAccounting{
-		ID:           strconv.FormatInt(c.id, 10),
+		ID:           strconv.FormatInt(id, 10),
 		Type:         dictionary.SubscribeAccounting,
 		IncludeDeals: includeDeals,
 	}
 
-	return c.sendMessage(body)
+	return id, c.sendMessage(body)
 }
 
-func (c *Client) GetOrderBookAndSubscribe(pairs string) error {
-	atomic.AddInt64(&c.id, 1)
+func (c *Client) GetOrderBookAndSubscribe(pairs string) (int64, error) {
+	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.GetOrderBookAndSubscribe{
-		ID:   strconv.FormatInt(c.id, 10),
+		ID:   strconv.FormatInt(id, 10),
 		Type: dictionary.GetOrderBookAndSubscribe,
 		Pair: pairs,
 	}
 
-	return c.sendMessage(body)
+	return id, c.sendMessage(body)
 }
 
-func (c *Client) GetPairsAndSubscribe() error {
-	atomic.AddInt64(&c.id, 1)
+func (c *Client) GetPairsAndSubscribe() (int64, error) {
+	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.GetPairsAndSubscribe{
-		ID:   strconv.FormatInt(c.id, 10),
+		ID:   strconv.FormatInt(id, 10),
 		Type: dictionary.GetPairsAndSubscribe,
 	}
 
-	return c.sendMessage(body)
+	return id, c.sendMessage(body)
 }
 
 func (c *Client) CreateOrder(pair, volume, limitPrice string, tradeIntent int) (int64, error) {
-	atomic.AddInt64(&c.id, 1)
+	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.CreateOrder{
-		ID:   strconv.FormatInt(c.id, 10),
+		ID:   strconv.FormatInt(id, 10),
 		Type: dictionary.CreateTradeOrder,
 		Fields: &request.CreateOrderFields{
 			Pair:          pair,
@@ -226,56 +227,66 @@ func (c *Client) CreateOrder(pair, volume, limitPrice string, tradeIntent int) (
 			LimitPrice:    limitPrice,
 			TradeIntent:   tradeIntent,
 		},
-		ExternalID: strconv.FormatInt(c.id, 10),
+		ExternalID: strconv.FormatInt(id, 10),
 	}
 
-	return c.id, c.sendMessage(body)
+	return id, c.sendMessage(body)
 }
 
-// nolint: unused
-func (c *Client) alterOrder(pair, volume, limitPrice string, tradeIntent int, orderID int64) (int64, error) {
-	atomic.AddInt64(&c.id, 1)
+func (c *Client) AlterOrder(pair, volume, limitPrice string, tradeIntent int, orderID int64) (int64, error) {
+	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.AlterTradeOrder{
 		CreateOrder: request.CreateOrder{
-			ID:   strconv.FormatInt(c.id, 10),
-			Type: dictionary.CreateTradeOrder,
+			ID:   strconv.FormatInt(id, 10),
+			Type: dictionary.AlterTradeOrder,
 			Fields: &request.CreateOrderFields{
 				Pair:          pair,
 				OrderedVolume: volume,
 				LimitPrice:    limitPrice,
 				TradeIntent:   tradeIntent,
 			},
-			ExternalID: strconv.FormatInt(c.id, 10),
 		},
-		OrderID: orderID,
+		ExternalID: strconv.FormatInt(id, 10),
+		OrderID:    orderID,
 	}
 
-	return c.id, c.sendMessage(body)
+	return id, c.sendMessage(body)
 }
 
-func (c *Client) CancelOrder(orderID int64) error {
-	atomic.AddInt64(&c.id, 1)
+func (c *Client) CancelOrder(orderID int64) (int64, error) {
+	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.CancelOrder{
-		ID:      strconv.FormatInt(c.id, 10),
+		ID:      strconv.FormatInt(id, 10),
 		Type:    dictionary.CancelOrder,
 		OrderID: orderID,
 	}
 
-	return c.sendMessage(body)
+	return id, c.sendMessage(body)
 }
 
-func (c *Client) GetOrder(orderID int64) error {
-	atomic.AddInt64(&c.id, 1)
+func (c *Client) GetOrder(orderID int64) (int64, error) {
+	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.GetOrder{
-		ID:      strconv.FormatInt(c.id, 10),
+		ID:      strconv.FormatInt(id, 10),
 		Type:    dictionary.GetOrder,
 		OrderID: orderID,
 	}
 
-	return c.sendMessage(body)
+	return id, c.sendMessage(body)
+}
+
+func (c *Client) GetBalance() (int64, error) {
+	id := atomic.AddInt64(&c.id, 1)
+
+	body := &request.GetBalance{
+		ID:   strconv.FormatInt(id, 10),
+		Type: dictionary.GetBalance,
+	}
+
+	return id, c.sendMessage(body)
 }
 
 func (c *Client) sendMessage(payload interface{}) error {
