@@ -43,7 +43,7 @@ var disbalanceCmd = &cobra.Command{
 		wsSvc := service.NewWS(cfg, wsEventBroker, &logger)
 		balanceSvc := service.NewBalance(st, wsEventBroker, wsSvc, &logger)
 
-		interrupt := make(chan os.Signal, 1)
+		interrupt := make(chan os.Signal, interruptChSize)
 		signal.Notify(interrupt, os.Interrupt)
 
 		ctx, cancel := context.WithCancel(context.Background())

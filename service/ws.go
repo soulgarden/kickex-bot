@@ -96,6 +96,10 @@ func (s *WS) GetBalance() (int64, error) {
 	return s.cli.GetBalance()
 }
 
+func (s *WS) AlterOrder(pair, volume, limitPrice string, tradeIntent int, orderID int64) (int64, error) {
+	return s.cli.AlterOrder(pair, volume, limitPrice, tradeIntent, orderID)
+}
+
 func (s *WS) Close() {
 	s.cli.Close()
 }

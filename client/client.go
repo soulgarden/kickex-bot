@@ -233,23 +233,22 @@ func (c *Client) CreateOrder(pair, volume, limitPrice string, tradeIntent int) (
 	return id, c.sendMessage(body)
 }
 
-// nolint: unused
-func (c *Client) alterOrder(pair, volume, limitPrice string, tradeIntent int, orderID int64) (int64, error) {
+func (c *Client) AlterOrder(pair, volume, limitPrice string, tradeIntent int, orderID int64) (int64, error) {
 	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.AlterTradeOrder{
 		CreateOrder: request.CreateOrder{
 			ID:   strconv.FormatInt(id, 10),
-			Type: dictionary.CreateTradeOrder,
+			Type: dictionary.AlterTradeOrder,
 			Fields: &request.CreateOrderFields{
 				Pair:          pair,
 				OrderedVolume: volume,
 				LimitPrice:    limitPrice,
 				TradeIntent:   tradeIntent,
 			},
-			ExternalID: strconv.FormatInt(id, 10),
 		},
-		OrderID: orderID,
+		ExternalID: strconv.FormatInt(id, 10),
+		OrderID:    orderID,
 	}
 
 	return id, c.sendMessage(body)

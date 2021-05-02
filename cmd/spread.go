@@ -26,6 +26,7 @@ import (
 const (
 	ShutDownDuration = time.Second * 15
 	cleanupInterval  = time.Minute * 10
+	interruptChSize  = 100
 )
 
 //nolint: gochecknoglobals
@@ -48,7 +49,7 @@ var spreadCmd = &cobra.Command{
 		orderSvc := service.NewOrder(cfg, st, wsEventBroker, wsSvc, &logger)
 		balanceSvc := service.NewBalance(st, wsEventBroker, wsSvc, &logger)
 
-		interrupt := make(chan os.Signal, 100)
+		interrupt := make(chan os.Signal, interruptChSize)
 		signal.Notify(interrupt, os.Interrupt)
 
 		ctx, cancel := context.WithCancel(context.Background())

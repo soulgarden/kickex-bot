@@ -187,11 +187,11 @@ func (s *Spread) processOldSession(
 		}
 
 		go s.manageOrder(ctx, sess, sess.ActiveSellOrderID)
-	} else if sess.ActiveBuyOrderID != 0 {
-		order := s.storage.GetUserOrder(sess.ActiveBuyOrderID)
+	} else if sess.GetActiveBuyOrderID() != 0 {
+		order := s.storage.GetUserOrder(sess.GetActiveBuyOrderID())
 		if order == nil {
 			s.logger.Error().
-				Int64("oid", sess.ActiveBuyOrderID).
+				Int64("oid", sess.GetActiveBuyOrderID()).
 				Msg("active buy order not fount in order list")
 			cancel()
 
@@ -200,7 +200,7 @@ func (s *Spread) processOldSession(
 			return
 		}
 
-		go s.manageOrder(ctx, sess, sess.ActiveBuyOrderID)
+		go s.manageOrder(ctx, sess, sess.GetActiveBuyOrderID())
 	} else if sess.ActiveBuyExtOrderID != 0 {
 		id, err := s.wsSvc.GetOrder(sess.ActiveBuyExtOrderID)
 		if err != nil {
@@ -237,7 +237,7 @@ func (s *Spread) processOldSession(
 		atomic.StoreInt64(&sess.ActiveBuyOrderID, order.ID)
 		atomic.StoreInt64(&sess.ActiveBuyExtOrderID, 0)
 
-		go s.manageOrder(ctx, sess, sess.ActiveBuyOrderID)
+		go s.manageOrder(ctx, sess, sess.GetActiveBuyOrderID())
 	} else if sess.ActiveSellExtOrderID != 0 {
 		id, err := s.wsSvc.GetOrder(sess.ActiveSellExtOrderID)
 		if err != nil {
@@ -313,76 +313,113 @@ func (s *Spread) orderCreationDecider(ctx context.Context, sess *storage.Session
 				return
 			}
 
-			if sess.IsNeedToCreateBuyOrder.IsSet() &&
-				s.orderBook.GetSpread().Cmp(dictionary.ZeroBigFloat) == 1 &&
-				s.orderBook.GetSpread().Cmp(s.spreadForStartBuy) >= 0 {
-				buyVolume, _, _, err := s.calculateBuyOrderVolume(sess)
-				if err != nil {
-					s.logger.Err(err).Msg("calc buy volume")
+			isBuyAvailable, err := s.isBuyOrderCreationAvailable(sess, false)
+			if err != nil {
+				s.logger.Err(err).Msg("is buy order creation available")
+
+				interrupt <- syscall.SIGINT
+
+				return
+			}
+
+			if isBuyAvailable {
+				if err := s.createBuyOrder(sess); err != nil {
+					s.logger.Err(err).Msg("create buy order")
+
+					if errors.Is(err, dictionary.ErrInsufficientFunds) {
+						continue
+					}
 
 					interrupt <- syscall.SIGINT
 
 					return
-				}
-
-				maxBidPrice := s.orderBook.GetMaxBidPrice().Text('f', s.pair.PriceScale)
-				maxBid := s.orderBook.GetBid(maxBidPrice)
-
-				if maxBid == nil {
-					continue
-				}
-
-				if maxBid.Amount.Cmp(buyVolume) >= 0 {
-					if err := s.createBuyOrder(sess); err != nil {
-						s.logger.Err(err).Msg("create buy order")
-
-						if errors.Is(err, dictionary.ErrInsufficientFunds) {
-							continue
-						}
-
-						interrupt <- syscall.SIGINT
-
-						return
-					}
 				}
 			}
 
-			// need to create sell order
-			if sess.IsNeedToCreateSellOrder.IsSet() &&
-				s.calcBuySpread(sess.ActiveBuyOrderID).Cmp(dictionary.ZeroBigFloat) == 1 &&
-				s.calcBuySpread(sess.ActiveBuyOrderID).Cmp(s.spreadForStartSell) == 1 {
-				sellVolume, _, _, err := s.calculateSellOrderVolume(sess)
-				if err != nil {
+			isSellAvailable, err := s.isSellOrderCreationAvailable(sess, false)
+			if err != nil {
+				s.logger.Err(err).Msg("is sell order creation available")
+
+				interrupt <- syscall.SIGINT
+
+				return
+			}
+
+			if isSellAvailable {
+				if err := s.createSellOrder(sess); err != nil {
+					s.logger.Err(err).Msg("create sell order")
+
+					if errors.Is(err, dictionary.ErrInsufficientFunds) {
+						continue
+					}
+
 					interrupt <- syscall.SIGINT
 
 					return
-				}
-
-				minAskPrice := s.orderBook.GetMinAskPrice().Text('f', s.pair.PriceScale)
-				minAsk := s.orderBook.GetAsk(minAskPrice)
-
-				if minAsk == nil {
-					continue
-				}
-
-				if minAsk.Amount.Cmp(sellVolume) >= 0 {
-					if err := s.createSellOrder(sess); err != nil {
-						s.logger.Err(err).Msg("create sell order")
-
-						if errors.Is(err, dictionary.ErrInsufficientFunds) {
-							continue
-						}
-
-						interrupt <- syscall.SIGINT
-
-						return
-					}
 				}
 			}
 		case <-ctx.Done():
 			return
 		}
 	}
+}
+
+func (s *Spread) isBuyOrderCreationAvailable(sess *storage.Session, force bool) (bool, error) {
+	if sess.IsNeedToCreateBuyOrder.IsNotSet() && !force {
+		return false, nil
+	}
+
+	if s.orderBook.GetSpread().Cmp(dictionary.ZeroBigFloat) == 1 &&
+		s.orderBook.GetSpread().Cmp(s.spreadForStartBuy) >= 0 {
+		buyVolume, _, _, err := s.calculateBuyOrderVolume(sess.GetPrevBuyOrderID())
+		if err != nil {
+			s.logger.Err(err).Msg("calc buy volume")
+
+			return false, err
+		}
+
+		maxBidPrice := s.orderBook.GetMaxBidPrice().Text('f', s.pair.PriceScale)
+		maxBid := s.orderBook.GetBid(maxBidPrice)
+
+		if maxBid == nil {
+			return false, nil
+		}
+
+		if maxBid.Amount.Cmp(buyVolume) >= 0 {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func (s *Spread) isSellOrderCreationAvailable(sess *storage.Session, force bool) (bool, error) {
+	if sess.IsNeedToCreateSellOrder.IsNotSet() && !force {
+		return false, nil
+	}
+
+	if s.calcBuySpread(sess.GetActiveBuyOrderID()).Cmp(dictionary.ZeroBigFloat) == 1 &&
+		s.calcBuySpread(sess.GetActiveBuyOrderID()).Cmp(s.spreadForStartSell) == 1 {
+		sellVolume, _, _, err := s.calculateSellOrderVolume(sess, sess.GetPrevSellOrderID())
+		if err != nil {
+			s.logger.Err(err).Msg("calc sell order volume")
+
+			return false, err
+		}
+
+		minAskPrice := s.orderBook.GetMinAskPrice().Text('f', s.pair.PriceScale)
+		minAsk := s.orderBook.GetAsk(minAskPrice)
+
+		if minAsk == nil {
+			return false, nil
+		}
+
+		if minAsk.Amount.Cmp(sellVolume) >= 0 {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 func (s *Spread) listenNewOrders(
@@ -494,7 +531,7 @@ func (s *Spread) checkListenOrderErrors(msg []byte, sess *storage.Session) (bool
 				s.logger.Warn().
 					Str("pair", s.pair.GetPairName()).
 					Int64("prev oid", sess.GetPrevBuyOrderID()).
-					Int64("oid", sess.GetActiveBuyOrderID()).
+					Int64("ext oid", atomic.LoadInt64(&sess.ActiveBuyExtOrderID)).
 					Msg("consider prev buy order as executed, allow to place sell order")
 
 				s.setBuyOrderExecutedFlags(sess, s.storage.GetUserOrder(sess.GetPrevBuyOrderID()))
@@ -502,13 +539,64 @@ func (s *Spread) checkListenOrderErrors(msg []byte, sess *storage.Session) (bool
 				s.logger.Warn().
 					Str("pair", s.pair.GetPairName()).
 					Int64("prev oid", sess.GetPrevSellOrderID()).
-					Int64("oid", sess.GetActiveSellOrderID()).
+					Int64("ext oid", atomic.LoadInt64(&sess.ActiveSellExtOrderID)).
 					Msg("consider prev sell order as executed, allow to place buy order")
 
 				s.setSellOrderExecutedFlags(sess, s.storage.GetUserOrder(sess.GetPrevSellOrderID()))
 			}
 
 			return true, nil
+		} else if er.Error.Code == response.DoneOrderCode &&
+			(sess.GetPrevBuyOrderID() != 0 || sess.GetPrevSellOrderID() != 0) {
+			if id == atomic.LoadInt64(&sess.ActiveBuyExtOrderID) {
+				o := s.storage.GetUserOrder(sess.GetPrevBuyOrderID())
+				if o.State == dictionary.StateCancelled {
+					s.logger.Warn().
+						Str("pair", s.pair.GetPairName()).
+						Int64("prev oid", sess.GetPrevBuyOrderID()).
+						Int64("ext oid", atomic.LoadInt64(&sess.ActiveBuyExtOrderID)).
+						Msg("altered buy order already cancelled")
+
+					atomic.StoreInt64(&sess.ActiveBuyExtOrderID, 0)
+					sess.IsNeedToCreateBuyOrder.Set()
+
+					return true, nil
+				} else if o.State == dictionary.StateDone {
+					s.logger.Warn().
+						Str("pair", s.pair.GetPairName()).
+						Int64("prev oid", sess.GetPrevBuyOrderID()).
+						Int64("ext oid", atomic.LoadInt64(&sess.ActiveBuyExtOrderID)).
+						Msg("altered buy order already done")
+
+					s.setBuyOrderExecutedFlags(sess, s.storage.GetUserOrder(sess.GetPrevBuyOrderID()))
+
+					return true, nil
+				}
+			} else if id == atomic.LoadInt64(&sess.ActiveSellExtOrderID) {
+				o := s.storage.GetUserOrder(sess.GetPrevSellOrderID())
+				if o.State == dictionary.StateCancelled {
+					s.logger.Warn().
+						Str("pair", s.pair.GetPairName()).
+						Int64("prev oid", sess.GetPrevSellOrderID()).
+						Int64("ext oid", atomic.LoadInt64(&sess.ActiveSellExtOrderID)).
+						Msg("altered sell order already cancelled")
+
+					atomic.StoreInt64(&sess.ActiveSellExtOrderID, 0)
+					sess.IsNeedToCreateSellOrder.Set()
+
+					return true, nil
+				} else if o.State == dictionary.StateDone {
+					s.logger.Warn().
+						Str("pair", s.pair.GetPairName()).
+						Int64("prev oid", sess.GetPrevSellOrderID()).
+						Int64("ext oid", atomic.LoadInt64(&sess.ActiveSellExtOrderID)).
+						Msg("altered sell order already done")
+
+					s.setSellOrderExecutedFlags(sess, s.storage.GetUserOrder(sess.GetPrevSellOrderID()))
+
+					return true, nil
+				}
+			}
 		}
 
 		err = fmt.Errorf("%w: %s", dictionary.ErrResponse, er.Error.Reason)
@@ -526,7 +614,7 @@ func (s *Spread) createBuyOrder(sess *storage.Session) error {
 
 	var err error
 
-	amount, total, price, err := s.calculateBuyOrderVolume(sess)
+	amount, total, price, err := s.calculateBuyOrderVolume(sess.GetPrevBuyOrderID())
 	if err != nil {
 		s.logger.Err(err).Msg("calculate buy order volume")
 
@@ -569,7 +657,7 @@ func (s *Spread) createBuyOrder(sess *storage.Session) error {
 func (s *Spread) createSellOrder(sess *storage.Session) error {
 	sess.IsNeedToCreateSellOrder.UnSet()
 
-	amount, total, price, err := s.calculateSellOrderVolume(sess)
+	amount, total, price, err := s.calculateSellOrderVolume(sess, sess.GetPrevSellOrderID())
 	if err != nil {
 		s.logger.Err(err).Msg("calculate sell order volume")
 
@@ -714,51 +802,45 @@ func (s *Spread) manageOrder(ctx context.Context, sess *storage.Session, orderID
 					return
 				}
 
-				// move buy order
-				previousPossiblePrice := big.NewFloat(0).Sub(order.LimitPrice, s.priceStep)
-
-				prevPriceExists := s.orderBook.GetBid(previousPossiblePrice.Text('f', s.pair.PriceScale)) != nil
-				nextPriceExists := s.orderBook.GetMaxBidPrice().Cmp(order.LimitPrice) == 1
-
-				nextBidPrice := s.orderBook.GetMaxBidPrice().Text('f', s.pair.PriceScale)
-
-				nextBid := s.orderBook.GetBid(nextBidPrice)
-
-				if (nextPriceExists) || !prevPriceExists {
-					s.logger.Warn().
-						Str("pair", s.pair.GetPairName()).
-						Int64("oid", orderID).
-						Str("spread", spread.String()).
-						Str("order price", order.LimitPrice.Text('f', s.pair.PriceScale)).
-						Str("max bid price", nextBidPrice).
-						Bool("next bid price exists", nextPriceExists).
-						Str("next bid volume", nextBid.Amount.String()).
-						Str("volume", order.OrderedVolume.String()).
-						Str("prev possible bid price", previousPossiblePrice.Text('f', -1)).
-						Bool("prev possible bid price exists", prevPriceExists).
-						Msg("time to move buy order")
-
-					err := s.cancelOrder(orderID)
+				if s.isMoveBuyOrderRequired(sess, order) {
+					isBuyAvailable, err := s.isBuyOrderCreationAvailable(sess, true)
 					if err != nil {
-						if errors.Is(err, dictionary.ErrCantCancelDoneOrder) {
-							s.logger.Warn().
-								Str("pair", s.pair.GetPairName()).
-								Int64("oid", orderID).
-								Msg("expected cancelled state, but got done")
-
-							s.orderBook.EventBroker.Publish(0)
-
-							continue
-						}
-
-						s.logger.Fatal().Int64("oid", orderID).Msg("cancel buy order for move")
+						s.logger.Fatal().Err(err).Msg("is buy order creation available")
 					}
 
-					atomic.StoreInt64(&sess.PrevBuyOrderID, orderID)
-					atomic.StoreInt64(&sess.ActiveBuyOrderID, 0)
-					sess.IsNeedToCreateBuyOrder.Set()
+					if isBuyAvailable {
+						extID, err := s.moveBuyOrder(orderID)
+						if err != nil {
+							s.logger.Fatal().Err(err).Msg("move buy order")
+						}
 
-					s.orderBook.EventBroker.Publish(0) // don't wait change order book
+						atomic.StoreInt64(&sess.PrevBuyOrderID, orderID)
+						atomic.StoreInt64(&sess.ActiveBuyExtOrderID, extID)
+
+						s.orderBook.EventBroker.Publish(0) // don't wait change order book
+					} else {
+						err := s.cancelOrder(orderID)
+						if err != nil {
+							if errors.Is(err, dictionary.ErrCantCancelDoneOrder) {
+								s.logger.Warn().
+									Str("pair", s.pair.GetPairName()).
+									Int64("oid", orderID).
+									Msg("expected cancelled buy order state, but got done")
+
+								s.orderBook.EventBroker.Publish(0)
+
+								continue
+							}
+
+							s.logger.Fatal().Int64("oid", orderID).Msg("cancel buy order for move")
+						}
+
+						atomic.StoreInt64(&sess.PrevBuyOrderID, orderID)
+						atomic.StoreInt64(&sess.ActiveBuyOrderID, 0)
+						sess.IsNeedToCreateBuyOrder.Set()
+
+						s.orderBook.EventBroker.Publish(0) // don't wait change order book
+					}
 
 					return
 				}
@@ -781,7 +863,7 @@ func (s *Spread) manageOrder(ctx context.Context, sess *storage.Session, orderID
 							s.logger.Warn().
 								Str("pair", s.pair.GetPairName()).
 								Int64("oid", orderID).
-								Msg("expected cancelled state, but got done")
+								Msg("expected cancelled sell order state, but got done")
 
 							s.orderBook.EventBroker.Publish(0)
 
@@ -791,7 +873,7 @@ func (s *Spread) manageOrder(ctx context.Context, sess *storage.Session, orderID
 						s.logger.Fatal().
 							Str("pair", s.pair.GetPairName()).
 							Int64("oid", orderID).
-							Msg("can't cancel order")
+							Msg("can't cancel sell order")
 					}
 
 					atomic.StoreInt64(&sess.PrevSellOrderID, orderID)
@@ -801,45 +883,45 @@ func (s *Spread) manageOrder(ctx context.Context, sess *storage.Session, orderID
 					return
 				}
 
-				// move sell order
-				previousPossiblePrice := big.NewFloat(0).Add(order.LimitPrice, s.priceStep)
-
-				prevPriceExists := s.orderBook.GetAsk(previousPossiblePrice.Text('f', s.pair.PriceScale)) != nil
-				nextPriceExists := s.orderBook.GetMinAskPrice().Cmp(order.LimitPrice) == -1
-
-				if nextPriceExists || !prevPriceExists {
-					s.logger.Warn().
-						Str("pair", s.pair.GetPairName()).
-						Int64("oid", orderID).
-						Str("order price", order.LimitPrice.Text('f', s.pair.PriceScale)).
-						Str("min ask price", s.orderBook.GetMinAskPrice().Text('f', s.pair.PriceScale)).
-						Str("spread", spread.String()).
-						Bool("next ask price exists", nextPriceExists).
-						Str("prev possible ask price", previousPossiblePrice.Text('f', -1)).
-						Bool("prev possible ask price exists", prevPriceExists).
-						Msg("time to move sell order")
-
-					err := s.cancelOrder(orderID)
+				if s.isMoveSellOrderRequired(sess, order) {
+					isSellAvailable, err := s.isSellOrderCreationAvailable(sess, true)
 					if err != nil {
-						if errors.Is(err, dictionary.ErrCantCancelDoneOrder) {
-							s.logger.Warn().
-								Str("pair", s.pair.GetPairName()).
-								Int64("oid", orderID).
-								Msg("expected cancelled state, but got done")
-
-							s.orderBook.EventBroker.Publish(0)
-
-							continue
-						}
-
-						s.logger.Fatal().Int64("oid", orderID).Msg("can't cancel order")
+						s.logger.Fatal().Err(err).Msg("is sell order creation available")
 					}
 
-					atomic.StoreInt64(&sess.PrevSellOrderID, orderID)
-					atomic.StoreInt64(&sess.ActiveSellOrderID, 0)
-					sess.IsNeedToCreateSellOrder.Set()
+					if isSellAvailable {
+						extID, err := s.moveSellOrder(sess, orderID)
+						if err != nil {
+							s.logger.Fatal().Err(err).Msg("move sell order")
+						}
 
-					s.orderBook.EventBroker.Publish(0)
+						atomic.StoreInt64(&sess.PrevSellOrderID, orderID)
+						atomic.StoreInt64(&sess.ActiveSellExtOrderID, extID)
+
+						s.orderBook.EventBroker.Publish(0) // don't wait change order book
+					} else {
+						err := s.cancelOrder(orderID)
+						if err != nil {
+							if errors.Is(err, dictionary.ErrCantCancelDoneOrder) {
+								s.logger.Warn().
+									Str("pair", s.pair.GetPairName()).
+									Int64("oid", orderID).
+									Msg("expected cancelled sell order state, but got done")
+
+								s.orderBook.EventBroker.Publish(0)
+
+								continue
+							}
+
+							s.logger.Fatal().Int64("oid", orderID).Msg("can't cancel order")
+						}
+
+						atomic.StoreInt64(&sess.PrevSellOrderID, orderID)
+						atomic.StoreInt64(&sess.ActiveSellOrderID, 0)
+						sess.IsNeedToCreateSellOrder.Set()
+
+						s.orderBook.EventBroker.Publish(0)
+					}
 
 					return
 				}
@@ -927,11 +1009,99 @@ func (s *Spread) cancelOrder(orderID int64) error {
 	return nil
 }
 
+func (s *Spread) moveBuyOrder(orderID int64) (int64, error) {
+	amount, total, price, err := s.calculateBuyOrderVolume(orderID)
+	if err != nil {
+		s.logger.Err(err).Msg("calculate buy order volume for alter order")
+
+		return 0, err
+	}
+
+	extID, err := s.wsSvc.AlterOrder(
+		s.pair.GetPairName(),
+		amount.Text('f', s.pair.QuantityScale),
+		price.Text('f', s.pair.PriceScale),
+		dictionary.BuyBase,
+		orderID,
+	)
+	if err != nil {
+		s.logger.Err(err).
+			Str("pair", s.pair.GetPairName()).
+			Int64("ext id", extID).
+			Int64("prev order id", orderID).
+			Str("spread", s.orderBook.GetSpread().Text('f', s.pair.PriceScale)).
+			Str("price", price.Text('f', s.pair.PriceScale)).
+			Str("amount", amount.Text('f', s.pair.QuantityScale)).
+			Str("total", total.String()).
+			Msg("alter buy order")
+
+		return 0, err
+	}
+
+	s.logger.
+		Warn().
+		Str("pair", s.pair.GetPairName()).
+		Int64("ext id", extID).
+		Int64("prev order id", orderID).
+		Str("spread", s.orderBook.GetSpread().Text('f', s.pair.PriceScale)).
+		Str("price", price.Text('f', s.pair.PriceScale)).
+		Str("amount", amount.Text('f', s.pair.QuantityScale)).
+		Str("total", total.String()).
+		Msg("alter buy order")
+
+	return extID, nil
+}
+
+func (s *Spread) moveSellOrder(sess *storage.Session, orderID int64) (int64, error) {
+	amount, total, price, err := s.calculateSellOrderVolume(sess, orderID)
+	if err != nil {
+		s.logger.Err(err).Msg("calculate buy order volume for alter order")
+
+		return 0, err
+	}
+
+	extID, err := s.wsSvc.AlterOrder(
+		s.pair.GetPairName(),
+		amount.Text('f', s.pair.QuantityScale),
+		price.Text('f', s.pair.PriceScale),
+		dictionary.SellBase,
+		orderID,
+	)
+	if err != nil {
+		s.logger.
+			Warn().
+			Str("pair", s.pair.GetPairName()).
+			Int64("prev order id", orderID).
+			Str("price", price.Text('f', s.pair.PriceScale)).
+			Str("amount", amount.Text('f', s.pair.QuantityScale)).
+			Str("total", total.String()).
+			Str("spread", s.calcBuySpread(sess.GetActiveBuyOrderID()).String()).
+			Msg("alter sell order")
+
+		return 0, err
+	}
+
+	s.logger.
+		Warn().
+		Str("pair", s.pair.GetPairName()).
+		Int64("ext id", extID).
+		Int64("prev order id", orderID).
+		Str("spread", s.orderBook.GetSpread().Text('f', s.pair.PriceScale)).
+		Str("price", price.Text('f', s.pair.PriceScale)).
+		Str("amount", amount.Text('f', s.pair.QuantityScale)).
+		Str("total", total.String()).
+		Msg("alter sell order")
+
+	return extID, nil
+}
+
 func (s *Spread) setBuyOrderExecutedFlags(sess *storage.Session, order *storage.Order) {
 	atomic.AddInt64(&s.orderBook.CompletedBuyOrders, 1)
 	atomic.StoreInt64(&sess.PrevBuyOrderID, 0)
 	atomic.StoreInt64(&sess.ActiveBuyOrderID, order.ID)
+	atomic.StoreInt64(&sess.ActiveBuyExtOrderID, 0)
 	atomic.StoreInt64(&sess.ActiveSellOrderID, 0)
+	atomic.StoreInt64(&sess.ActiveSellExtOrderID, 0)
 	sess.IsNeedToCreateSellOrder.Set()
 
 	totalBoughtVolume, ok := s.storage.GetTotalBuyVolume(s.pair, sess.ID)
@@ -1052,7 +1222,7 @@ func (s *Spread) getTotalBuyVolume() (*big.Float, error) {
 	return totalBuyVolumeInQuoted, nil
 }
 
-func (s *Spread) calculateBuyOrderVolume(sess *storage.Session) (
+func (s *Spread) calculateBuyOrderVolume(prevOrderID int64) (
 	amount *big.Float,
 	total *big.Float,
 	price *big.Float,
@@ -1062,7 +1232,7 @@ func (s *Spread) calculateBuyOrderVolume(sess *storage.Session) (
 	total = big.NewFloat(0)
 	amount = big.NewFloat(0)
 
-	if sess.GetPrevBuyOrderID() == 0 {
+	if prevOrderID == 0 {
 		total, err = s.getTotalBuyVolume()
 		if err != nil {
 			s.logger.Err(err).Msg("parse string as float")
@@ -1075,7 +1245,7 @@ func (s *Spread) calculateBuyOrderVolume(sess *storage.Session) (
 		return amount, total, price, nil
 	}
 
-	prevBuyOrder := s.storage.GetUserOrder(sess.GetPrevBuyOrderID())
+	prevBuyOrder := s.storage.GetUserOrder(prevOrderID)
 
 	orderedTotal := big.NewFloat(0).Mul(prevBuyOrder.OrderedVolume, prevBuyOrder.LimitPrice)
 
@@ -1092,7 +1262,7 @@ func (s *Spread) calculateBuyOrderVolume(sess *storage.Session) (
 	return amount, total, price, nil
 }
 
-func (s *Spread) calculateSellOrderVolume(sess *storage.Session) (
+func (s *Spread) calculateSellOrderVolume(sess *storage.Session, prevOrderID int64) (
 	amount *big.Float,
 	total *big.Float,
 	price *big.Float,
@@ -1104,18 +1274,18 @@ func (s *Spread) calculateSellOrderVolume(sess *storage.Session) (
 
 	var ok bool
 
-	if sess.GetPrevSellOrderID() == 0 {
+	if prevOrderID == 0 {
 		amount, ok = s.storage.GetTotalBuyVolume(s.pair, sess.ID)
 		if !ok {
 			s.logger.Err(dictionary.ErrParseFloat).
 				Int64("oid", buyOrder.ID).
-				Int64("prev oid", sess.GetPrevSellOrderID()).
+				Int64("prev oid", prevOrderID).
 				Msg("parse string as float")
 
 			return nil, nil, nil, dictionary.ErrParseFloat
 		}
 	} else {
-		prevSellOrder := s.storage.GetUserOrder(sess.GetPrevSellOrderID())
+		prevSellOrder := s.storage.GetUserOrder(prevOrderID)
 		amount = prevSellOrder.OrderedVolume
 
 		if prevSellOrder.TotalSellVolume.Cmp(dictionary.ZeroBigFloat) != 0 {
@@ -1127,4 +1297,71 @@ func (s *Spread) calculateSellOrderVolume(sess *storage.Session) (
 	total.Mul(amount, price)
 
 	return amount, total, price, nil
+}
+
+func (s *Spread) isMoveBuyOrderRequired(sess *storage.Session, o *storage.Order) bool {
+	previousPossiblePrice := big.NewFloat(0).Sub(o.LimitPrice, s.priceStep)
+
+	prevPriceExists := s.orderBook.GetBid(previousPossiblePrice.Text('f', s.pair.PriceScale)) != nil
+	nextPriceExists := s.orderBook.GetMaxBidPrice().Cmp(o.LimitPrice) == 1
+
+	isReq := nextPriceExists || !prevPriceExists
+
+	if !isReq {
+		return false
+	}
+
+	spread := s.calcBuySpread(sess.GetActiveBuyOrderID())
+
+	nextBidPrice := s.orderBook.GetMaxBidPrice().Text('f', s.pair.PriceScale)
+
+	nextBidAmountStr := ""
+
+	nextBid := s.orderBook.GetBid(nextBidPrice)
+	if nextBid != nil {
+		nextBidAmountStr = nextBid.Amount.String()
+	}
+
+	s.logger.Warn().
+		Str("pair", s.pair.GetPairName()).
+		Int64("oid", o.ID).
+		Str("spread", spread.String()).
+		Str("order price", o.LimitPrice.Text('f', s.pair.PriceScale)).
+		Str("max bid price", nextBidPrice).
+		Bool("next bid price exists", nextPriceExists).
+		Str("next bid volume", nextBidAmountStr).
+		Str("volume", o.OrderedVolume.String()).
+		Str("prev possible bid price", previousPossiblePrice.Text('f', -1)).
+		Bool("prev possible bid price exists", prevPriceExists).
+		Msg("time to move buy order")
+
+	return true
+}
+
+func (s *Spread) isMoveSellOrderRequired(sess *storage.Session, o *storage.Order) bool {
+	previousPossiblePrice := big.NewFloat(0).Add(o.LimitPrice, s.priceStep)
+
+	prevPriceExists := s.orderBook.GetAsk(previousPossiblePrice.Text('f', s.pair.PriceScale)) != nil
+	nextPriceExists := s.orderBook.GetMinAskPrice().Cmp(o.LimitPrice) == -1
+
+	isReq := nextPriceExists || !prevPriceExists
+
+	if !isReq {
+		return false
+	}
+
+	spread := s.calcBuySpread(sess.GetActiveBuyOrderID())
+
+	s.logger.Warn().
+		Str("pair", s.pair.GetPairName()).
+		Int64("oid", o.ID).
+		Str("order price", o.LimitPrice.Text('f', s.pair.PriceScale)).
+		Str("min ask price", s.orderBook.GetMinAskPrice().Text('f', s.pair.PriceScale)).
+		Str("spread", spread.String()).
+		Bool("next ask price exists", nextPriceExists).
+		Str("prev possible ask price", previousPossiblePrice.Text('f', -1)).
+		Bool("prev possible ask price exists", prevPriceExists).
+		Msg("time to move sell order")
+
+	return true
 }
