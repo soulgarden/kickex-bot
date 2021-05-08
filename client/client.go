@@ -278,6 +278,18 @@ func (c *Client) GetOrder(orderID int64) (int64, error) {
 	return id, c.sendMessage(body)
 }
 
+func (c *Client) GetOrderByExtID(extID int64) (int64, error) {
+	id := atomic.AddInt64(&c.id, 1)
+
+	body := &request.GetOrder{
+		ID:         strconv.FormatInt(id, 10),
+		Type:       dictionary.GetOrder,
+		ExternalID: strconv.FormatInt(extID, 10),
+	}
+
+	return id, c.sendMessage(body)
+}
+
 func (c *Client) GetBalance() (int64, error) {
 	id := atomic.AddInt64(&c.id, 1)
 

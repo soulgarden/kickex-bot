@@ -168,6 +168,7 @@ var spreadCmd = &cobra.Command{
 				wsSvc,
 				pair,
 				orderBook,
+				orderSvc,
 				&logger,
 			)
 			if err != nil {

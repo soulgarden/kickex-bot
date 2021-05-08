@@ -3,7 +3,7 @@ version: '3'
 services:
   spread_demo:
     container_name: spread_demo
-    image: soulgarden/kickex-bot:1.0.34
+    image: soulgarden/kickex-bot:1.0.35
     environment:
       CFG_PATH: /conf.local.json
     stop_signal: SIGINT
@@ -13,7 +13,7 @@ services:
 
   disbalance_demo:
     container_name: disbalance_demo
-    image: soulgarden/kickex-bot:1.0.34
+    image: soulgarden/kickex-bot:1.0.35
     environment:
       CFG_PATH: /conf.local.json
     stop_signal: SIGINT
@@ -24,7 +24,7 @@ services:
 
   spread:
     container_name: spread
-    image: soulgarden/kickex-bot:1.0.34
+    image: soulgarden/kickex-bot:1.0.35
     environment:
       CFG_PATH: /conf.local.json
     stop_signal: SIGINT
@@ -34,7 +34,7 @@ services:
 
   disbalance:
     container_name: disbalance
-    image: soulgarden/kickex-bot:1.0.34
+    image: soulgarden/kickex-bot:1.0.35
     environment:m
     CFG_PATH: /conf.local.json
     stop_signal: SIGINT
