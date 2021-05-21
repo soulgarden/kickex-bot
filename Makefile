@@ -14,8 +14,8 @@ docker_logs dl:
 	docker-compose logs -f
 
 build:
-	docker build  . -f ./docker/bot/Dockerfile -t soulgarden/kickex-bot:1.0.35
-	docker push soulgarden/kickex-bot:1.0.35
+	docker build  . -f ./docker/bot/Dockerfile -t soulgarden/kickex-bot:1.0.37
+	docker push soulgarden/kickex-bot:1.0.37
 
 deploy_swarm ds:
 	docker stack deploy kickex-bot -c docker-compose-swarm.yml --with-registry-auth --prune

@@ -203,7 +203,7 @@ func (s *Spread) processOldSession(
 			}
 		}
 
-		go s.manageOrder(ctx, sess, sess.ActiveSellOrderID)
+		go s.manageOrder(ctx, interrupt, sess, sess.ActiveSellOrderID)
 	} else if sess.GetActiveBuyOrderID() != 0 {
 		order := s.storage.GetUserOrder(sess.GetActiveBuyOrderID())
 		if order == nil {
@@ -230,7 +230,7 @@ func (s *Spread) processOldSession(
 			}
 		}
 
-		go s.manageOrder(ctx, sess, sess.GetActiveBuyOrderID())
+		go s.manageOrder(ctx, interrupt, sess, sess.GetActiveBuyOrderID())
 	} else if sess.ActiveBuyExtOrderID != 0 {
 		reqID, err := s.wsSvc.GetOrderByExtID(sess.ActiveBuyExtOrderID)
 		if err != nil {
@@ -257,7 +257,7 @@ func (s *Spread) processOldSession(
 		atomic.StoreInt64(&sess.ActiveBuyOrderID, o.ID)
 		atomic.StoreInt64(&sess.ActiveBuyExtOrderID, 0)
 
-		go s.manageOrder(ctx, sess, sess.GetActiveBuyOrderID())
+		go s.manageOrder(ctx, interrupt, sess, sess.GetActiveBuyOrderID())
 	} else if sess.ActiveSellExtOrderID != 0 {
 		reqID, err := s.wsSvc.GetOrderByExtID(sess.ActiveSellExtOrderID)
 		if err != nil {
@@ -284,7 +284,7 @@ func (s *Spread) processOldSession(
 		atomic.StoreInt64(&sess.ActiveSellOrderID, o.ID)
 		atomic.StoreInt64(&sess.ActiveSellExtOrderID, 0)
 
-		go s.manageOrder(ctx, sess, sess.ActiveSellOrderID)
+		go s.manageOrder(ctx, interrupt, sess, sess.ActiveSellOrderID)
 	}
 
 	s.processSession(sessCtx, sess, interrupt)
@@ -525,7 +525,7 @@ func (s *Spread) listenNewOrders(
 				s.storage.AddSellOrder(s.pair, sess.ID, co.OrderID)
 			}
 
-			go s.manageOrder(ctx, sess, co.OrderID)
+			go s.manageOrder(ctx, interrupt, sess, co.OrderID)
 
 		case <-ctx.Done():
 			return nil
@@ -732,7 +732,7 @@ func (s *Spread) createSellOrder(sess *storage.Session) error {
 	return nil
 }
 
-func (s *Spread) manageOrder(ctx context.Context, sess *storage.Session, orderID int64) {
+func (s *Spread) manageOrder(ctx context.Context, interrupt chan os.Signal, sess *storage.Session, orderID int64) {
 	s.logger.Warn().
 		Str("id", sess.ID).
 		Str("pair", s.pair.GetPairName()).
@@ -748,6 +748,8 @@ func (s *Spread) manageOrder(ctx context.Context, sess *storage.Session, orderID
 		Int64("oid", orderID).
 		Msg("stop order manager process")
 
+	startedTime := time.Now()
+
 	for {
 		select {
 		case <-e:
@@ -755,6 +757,14 @@ func (s *Spread) manageOrder(ctx context.Context, sess *storage.Session, orderID
 			order := s.storage.GetUserOrder(orderID)
 			if order == nil {
 				s.logger.Warn().Int64("oid", orderID).Msg("order not found")
+
+				if startedTime.Add(time.Minute).Before(time.Now()) {
+					s.logger.Error().Msg("order creation event not received")
+
+					interrupt <- syscall.SIGSTOP
+
+					return
+				}
 
 				continue
 			}
