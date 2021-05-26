@@ -84,6 +84,7 @@ var disbalanceCmd = &cobra.Command{
 
 		tgSvc.Send(fmt.Sprintf("env: %s, disbalance bot starting", cfg.Env))
 
+		wg.Add(1)
 		go accounting.Start(ctx, interrupt, &wg)
 
 		dis := strategy.NewDisbalance(cfg, st, wsEventBroker, service.NewConversion(st, &logger), tgSvc, &logger)

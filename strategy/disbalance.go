@@ -48,9 +48,7 @@ func NewDisbalance(
 }
 
 func (s *Disbalance) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan os.Signal) {
-	defer func() {
-		wg.Done()
-	}()
+	defer wg.Done()
 
 	ch := make(chan int8, len(s.cfg.TrackingPairs))
 
@@ -117,7 +115,7 @@ func (s *Disbalance) check() {
 			bookMinAskPrice := big.NewFloat(0).Mul(quotePrice, book.GetMinAskPrice())
 			bookMaxBidPrice := big.NewFloat(0).Mul(quotePrice, book.GetMaxBidPrice())
 
-			if bookMinAskPrice.Cmp(minAskPrice) == 1 {
+			if minAskPrice.Cmp(dictionary.ZeroBigFloat) == 0 || bookMinAskPrice.Cmp(minAskPrice) == -1 {
 				minAskPrice = bookMinAskPrice
 				minAskPair = pairName
 			}
@@ -131,19 +129,19 @@ func (s *Disbalance) check() {
 		s.logger.Info().
 			Str("base", baseCurrency).
 			Str("bid pair", maxBidPair).
-			Str("bid price", maxBidPrice.Text('f', 10)).
+			Str("max bid price", maxBidPrice.Text('f', 10)).
 			Str("ask pair", minAskPair).
-			Str("ask price", minAskPrice.Text('f', 10)).
+			Str("min ask price", minAskPrice.Text('f', 10)).
 			Msg("lowest book prices in usd")
 
-		if maxBidPrice.Cmp(minAskPrice) == 1 {
+		if maxBidPrice.Cmp(minAskPrice) > 0 {
 			s.logger.Warn().
 				Str("base", baseCurrency).
 				Str("bid pair", maxBidPair).
-				Str("bid price", maxBidPrice.Text('f', 10)).
+				Str("max bid price", maxBidPrice.Text('f', 10)).
 				Str("ask pair", minAskPair).
-				Str("ask price", minAskPrice.Text('f', 10)).
-				Msg("bid price larger than ask price")
+				Str("min ask price", minAskPrice.Text('f', 10)).
+				Msg("max bid price larger than min ask price")
 
 			if time.Since(s.sentAt).Seconds() < sendInterval {
 				s.sentAt = time.Now()

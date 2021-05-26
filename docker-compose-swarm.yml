@@ -2,7 +2,7 @@ version: '3'
 
 services:
   disbalance:
-    image: soulgarden/kickex-bot:1.0.39
+    image: soulgarden/kickex-bot:1.0.40
     environment:
       CFG_PATH: /conf.local.json
     stop_signal: SIGINT
@@ -12,7 +12,7 @@ services:
     command: [ "/bin/bot", "disbalance" ]
 
   spread:
-    image: soulgarden/kickex-bot:1.0.39
+    image: soulgarden/kickex-bot:1.0.40
     environment:
       CFG_PATH: /conf.local.json
     stop_signal: SIGINT
