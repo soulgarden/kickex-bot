@@ -111,6 +111,8 @@ var disbalanceCmd = &cobra.Command{
 			go subscriber.NewOrderBook(cfg, st, wsEventBroker, wsSvc, pair, orderBook, &logger).Start(ctx, &wg, interrupt)
 		}
 
+		time.Sleep(pairsWaitingDuration)
+
 		wg.Add(1)
 		go dis.Start(ctx, &wg, interrupt)
 

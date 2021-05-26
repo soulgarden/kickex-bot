@@ -12,12 +12,11 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/soulgarden/kickex-bot/conf"
-	"github.com/soulgarden/kickex-bot/dictionary"
 	"github.com/soulgarden/kickex-bot/service"
 	"github.com/soulgarden/kickex-bot/storage"
 )
 
-const sendInterval = 30
+const sendInterval = 30 * time.Second
 
 type Disbalance struct {
 	cfg         *conf.Bot
@@ -25,7 +24,7 @@ type Disbalance struct {
 	eventBroker *broker.Broker
 	conversion  *service.Conversion
 	tgSvc       *service.Telegram
-	sentAt      time.Time
+	sentAt      *time.Time
 	logger      *zerolog.Logger
 }
 
@@ -69,8 +68,6 @@ func (s *Disbalance) Start(ctx context.Context, wg *sync.WaitGroup, interrupt ch
 	s.logger.Warn().Msg("disbalance process started")
 	defer s.logger.Warn().Msg("stop disbalance process")
 
-	s.sentAt = time.Now()
-
 	for {
 		select {
 		case <-ch:
@@ -83,14 +80,15 @@ func (s *Disbalance) Start(ctx context.Context, wg *sync.WaitGroup, interrupt ch
 
 func (s *Disbalance) check() {
 	for baseCurrency, quotedCurrencies := range s.storage.OrderBooks {
-		var quotePrice *big.Float
-
 		var err error
 
-		minAskPrice := big.NewFloat(0)
-		minAskPair := ""
+		var quotePrice *big.Float
 
-		maxBidPrice := big.NewFloat(0)
+		var minAskPrice *big.Float
+
+		var maxBidPrice *big.Float
+
+		minAskPair := ""
 		maxBidPair := ""
 
 		for quotedCurrency, book := range quotedCurrencies {
@@ -115,12 +113,12 @@ func (s *Disbalance) check() {
 			bookMinAskPrice := big.NewFloat(0).Mul(quotePrice, book.GetMinAskPrice())
 			bookMaxBidPrice := big.NewFloat(0).Mul(quotePrice, book.GetMaxBidPrice())
 
-			if minAskPrice.Cmp(dictionary.ZeroBigFloat) == 0 || bookMinAskPrice.Cmp(minAskPrice) == -1 {
+			if minAskPrice == nil || bookMinAskPrice.Cmp(minAskPrice) == -1 {
 				minAskPrice = bookMinAskPrice
 				minAskPair = pairName
 			}
 
-			if maxBidPrice.Cmp(dictionary.ZeroBigFloat) == 0 || bookMaxBidPrice.Cmp(maxBidPrice) == 1 {
+			if maxBidPrice == nil || bookMaxBidPrice.Cmp(maxBidPrice) == 1 {
 				maxBidPrice = bookMaxBidPrice
 				maxBidPair = pairName
 			}
@@ -143,13 +141,16 @@ func (s *Disbalance) check() {
 				Str("min ask price", minAskPrice.Text('f', 10)).
 				Msg("max bid price larger than min ask price")
 
-			if time.Since(s.sentAt).Seconds() < sendInterval {
-				s.sentAt = time.Now()
+			now := time.Now()
+			if s.sentAt == nil || time.Now().After(s.sentAt.Add(sendInterval)) {
+				s.sentAt = &now
 
 				s.tgSvc.Send(
 					fmt.Sprintf(
-						`env: %s, bid price larger than ask price, bid pair %s, ask pair %s`,
+						`env: %s, max bid price %s larger than min ask price %s, bid pair %s, ask pair %s`,
 						s.cfg.Env,
+						maxBidPrice.Text('f', 10),
+						minAskPrice.Text('f', 10),
 						maxBidPair,
 						maxBidPair,
 					))

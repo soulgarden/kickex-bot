@@ -19,3 +19,12 @@ services:
     volumes:
       - ./conf/conf.remote.json:/conf.local.json
       - ./storage:/storage
+
+  spread_kishu:
+    image: soulgarden/kickex-bot:1.0.40
+    environment:
+      CFG_PATH: /conf.local.json
+    stop_signal: SIGINT
+    volumes:
+      - ./conf/kishu.conf.remote.json:/conf.local.json
+      - ./storage:/storage
