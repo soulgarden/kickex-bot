@@ -29,22 +29,54 @@ func (s *Session) GetPrevBuyOrderID() int64 {
 	return atomic.LoadInt64(&s.PrevBuyOrderID)
 }
 
+func (s *Session) SetPrevBuyOrderID(oid int64) {
+	atomic.StoreInt64(&s.PrevBuyOrderID, oid)
+}
+
 func (s *Session) GetPrevSellOrderID() int64 {
 	return atomic.LoadInt64(&s.PrevSellOrderID)
+}
+
+func (s *Session) SetPrevSellOrderID(oid int64) {
+	atomic.StoreInt64(&s.PrevSellOrderID, oid)
 }
 
 func (s *Session) GetActiveBuyOrderID() int64 {
 	return atomic.LoadInt64(&s.ActiveBuyOrderID)
 }
 
+func (s *Session) SetActiveBuyOrderID(oid int64) {
+	atomic.StoreInt64(&s.ActiveBuyOrderID, oid)
+}
+
 func (s *Session) GetActiveSellOrderID() int64 {
 	return atomic.LoadInt64(&s.ActiveSellOrderID)
 }
 
+func (s *Session) SetActiveSellOrderID(oid int64) {
+	atomic.StoreInt64(&s.ActiveSellOrderID, oid)
+}
+
 func (s *Session) IsProcessingBuyOrder() bool {
-	return atomic.LoadInt64(&s.ActiveBuyOrderID) == 0 && atomic.LoadInt64(&s.ActiveBuyExtOrderID) == 0
+	return atomic.LoadInt64(&s.ActiveBuyOrderID) == 0 && s.GetActiveBuyExtOrderID() == 0
 }
 
 func (s *Session) IsProcessingSellOrder() bool {
-	return atomic.LoadInt64(&s.ActiveSellOrderID) == 0 && atomic.LoadInt64(&s.ActiveSellExtOrderID) == 0
+	return atomic.LoadInt64(&s.ActiveSellOrderID) == 0 && s.GetActiveSellExtOrderID() == 0
+}
+
+func (s *Session) GetActiveBuyExtOrderID() int64 {
+	return atomic.LoadInt64(&s.ActiveBuyExtOrderID)
+}
+
+func (s *Session) SetActiveBuyExtOrderID(extID int64) {
+	atomic.StoreInt64(&s.ActiveBuyExtOrderID, extID)
+}
+
+func (s *Session) GetActiveSellExtOrderID() int64 {
+	return atomic.LoadInt64(&s.ActiveSellExtOrderID)
+}
+
+func (s *Session) SetActiveSellExtOrderID(extID int64) {
+	atomic.StoreInt64(&s.ActiveSellExtOrderID, extID)
 }

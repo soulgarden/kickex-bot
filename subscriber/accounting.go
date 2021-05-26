@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/soulgarden/kickex-bot/broker"
 	"github.com/soulgarden/kickex-bot/service"
@@ -129,10 +130,19 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal, wg *sy
 			}
 
 			for _, order := range r.Orders {
+				createdTS, err := strconv.ParseInt(order.CreatedTimestamp, 10, 0)
+				if err != nil {
+					s.logger.Err(err).Bytes("msg", msg).Msg("parse string as int64")
+
+					interrupt <- syscall.SIGSTOP
+
+					return
+				}
+
 				o := &storage.Order{
 					ID:               order.ID,
 					TradeTimestamp:   order.TradeTimestamp,
-					CreatedTimestamp: order.CreatedTimestamp,
+					CreatedTimestamp: time.Unix(0, createdTS),
 					State:            order.State,
 					Modifier:         order.Modifier,
 					Pair:             order.Pair,

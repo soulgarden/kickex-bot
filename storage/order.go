@@ -1,11 +1,14 @@
 package storage
 
-import "math/big"
+import (
+	"math/big"
+	"time"
+)
 
 type Order struct {
 	ID               int64
 	TradeTimestamp   string
-	CreatedTimestamp string
+	CreatedTimestamp time.Time
 	State            int
 	Modifier         int
 	Pair             string

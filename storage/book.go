@@ -10,6 +10,7 @@ import (
 	"github.com/soulgarden/kickex-bot/broker"
 	"github.com/soulgarden/kickex-bot/dictionary"
 	"github.com/tevino/abool"
+	goAtomic "go.uber.org/atomic"
 )
 
 type Book struct {
@@ -20,7 +21,8 @@ type Book struct {
 	LastPrice   string
 	Spread      *big.Float
 
-	Sessions map[string]*Session `json:"session"`
+	Sessions        map[string]*Session `json:"session"`
+	ActiveSessionID goAtomic.String
 
 	CompletedBuyOrders  int64
 	CompletedSellOrders int64
@@ -189,7 +191,7 @@ func (b *Book) NewSession() *Session {
 	b.mx.Lock()
 	defer b.mx.Unlock()
 
-	session := &Session{
+	sess := &Session{
 		ID:                      "",
 		ActiveBuyExtOrderID:     0,
 		ActiveBuyOrderID:        0,
@@ -205,10 +207,12 @@ func (b *Book) NewSession() *Session {
 		IsDone:     abool.New(),
 	}
 
-	session.ID = uuid.NewV4().String()
-	session.IsNeedToCreateBuyOrder.Set()
+	sess.ID = uuid.NewV4().String()
+	b.ActiveSessionID.Store(sess.ID)
 
-	b.Sessions[session.ID] = session
+	sess.IsNeedToCreateBuyOrder.Set()
 
-	return session
+	b.Sessions[sess.ID] = sess
+
+	return sess
 }

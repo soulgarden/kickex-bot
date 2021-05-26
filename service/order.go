@@ -228,10 +228,17 @@ func (s *Order) processOrderMsg(msg []byte) (*storage.Order, error) {
 		return nil, nil
 	}
 
+	createdTS, err := strconv.ParseInt(r.Order.CreatedTimestamp, 10, 0)
+	if err != nil {
+		s.logger.Err(err).Bytes("msg", msg).Msg("parse string as int64")
+
+		return nil, err
+	}
+
 	o := &storage.Order{
 		ID:               r.Order.ID,
 		TradeTimestamp:   r.Order.TradeTimestamp,
-		CreatedTimestamp: r.Order.CreatedTimestamp,
+		CreatedTimestamp: time.Unix(0, createdTS),
 		State:            r.Order.State,
 		Modifier:         r.Order.Modifier,
 		Pair:             r.Order.Pair,
