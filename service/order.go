@@ -121,7 +121,7 @@ func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan os.Signal
 	}
 }
 
-func (s *Order) UpdateOrderStates(ctx context.Context, interrupt chan os.Signal, reqID int64) (*storage.Order, error) {
+func (s *Order) UpdateOrderStates(ctx context.Context, interrupt chan os.Signal, rid int64) (*storage.Order, error) {
 	eventsCh := s.eventBroker.Subscribe()
 	defer s.eventBroker.Unsubscribe(eventsCh)
 
@@ -145,9 +145,9 @@ func (s *Order) UpdateOrderStates(ctx context.Context, interrupt chan os.Signal,
 				return nil, dictionary.ErrCantConvertInterfaceToBytes
 			}
 
-			rid := &response.ID{}
+			resp := &response.ID{}
 
-			err := json.Unmarshal(msg, rid)
+			err := json.Unmarshal(msg, resp)
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
@@ -156,7 +156,7 @@ func (s *Order) UpdateOrderStates(ctx context.Context, interrupt chan os.Signal,
 				return nil, nil
 			}
 
-			if strconv.FormatInt(reqID, 10) != rid.ID {
+			if strconv.FormatInt(rid, 10) != resp.ID {
 				continue
 			}
 

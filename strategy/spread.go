@@ -205,7 +205,7 @@ func (s *Spread) processOldSession(
 	if sess.GetActiveSellOrderID() != 0 {
 		order := s.storage.GetUserOrder(sess.GetActiveSellOrderID())
 		if order == nil {
-			reqID, err := s.wsSvc.GetOrder(sess.GetActiveSellOrderID())
+			rid, err := s.wsSvc.GetOrder(sess.GetActiveSellOrderID())
 			if err != nil {
 				s.logger.Err(err).
 					Str("id", sess.ID).
@@ -214,17 +214,21 @@ func (s *Spread) processOldSession(
 				cancel()
 
 				interrupt <- syscall.SIGINT
+
+				return
 			}
 
-			o, err := s.orderSvc.UpdateOrderStates(ctx, interrupt, reqID)
+			o, err := s.orderSvc.UpdateOrderStates(ctx, interrupt, rid)
 			if err != nil || o == nil {
 				s.logger.Err(err).
 					Str("id", sess.ID).
 					Int64("oid", sess.GetActiveSellOrderID()).
-					Msg("get order by id")
+					Msg("get order by id failed")
 				cancel()
 
 				interrupt <- syscall.SIGINT
+
+				return
 			}
 		}
 
@@ -241,6 +245,8 @@ func (s *Spread) processOldSession(
 				cancel()
 
 				interrupt <- syscall.SIGINT
+
+				return
 			}
 
 			o, err := s.orderSvc.UpdateOrderStates(ctx, interrupt, reqID)
@@ -248,66 +254,78 @@ func (s *Spread) processOldSession(
 				s.logger.Err(err).
 					Str("id", sess.ID).
 					Int64("oid", sess.GetActiveBuyOrderID()).
-					Msg("get order by id")
+					Msg("get order by id failed")
 				cancel()
 
 				interrupt <- syscall.SIGINT
+
+				return
 			}
 		}
 
 		go s.manageOrder(ctx, interrupt, sess, sess.GetActiveBuyOrderID())
-	} else if sess.GetActiveBuyExtOrderID() != 0 {
-		reqID, err := s.wsSvc.GetOrderByExtID(sess.GetActiveBuyExtOrderID())
+	} else if sess.GetActiveBuyExtOrderID() != "" {
+		rid, err := s.wsSvc.GetOrderByExtID(sess.GetActiveBuyExtOrderID())
 		if err != nil {
 			s.logger.Err(err).
 				Str("id", sess.ID).
-				Int64("oid", sess.GetActiveBuyExtOrderID()).
+				Str("ext oid", sess.GetActiveBuyExtOrderID()).
 				Msg("get order")
 			cancel()
 
 			interrupt <- syscall.SIGINT
+
+			return
 		}
 
-		o, err := s.orderSvc.UpdateOrderStates(ctx, interrupt, reqID)
+		o, err := s.orderSvc.UpdateOrderStates(ctx, interrupt, rid)
 		if err != nil || o == nil {
 			s.logger.Err(err).
 				Str("id", sess.ID).
-				Int64("oid", sess.GetActiveBuyExtOrderID()).
-				Msg("get order by ext id")
+				Str("ext oid", sess.GetActiveBuyExtOrderID()).
+				Msg("get order by ext oid failed")
 			cancel()
 
 			interrupt <- syscall.SIGINT
+
+			return
 		}
 
 		sess.SetActiveBuyOrderID(o.ID)
-		sess.SetActiveBuyExtOrderID(0)
+		sess.SetActiveBuyExtOrderID("")
+		sess.SetActiveBuyOrderRequestID("")
 
 		go s.manageOrder(ctx, interrupt, sess, sess.GetActiveBuyOrderID())
-	} else if sess.GetActiveSellExtOrderID() != 0 {
+	} else if sess.GetActiveSellExtOrderID() != "" {
 		reqID, err := s.wsSvc.GetOrderByExtID(sess.GetActiveSellExtOrderID())
 		if err != nil {
 			s.logger.Err(err).
 				Str("id", sess.ID).
-				Int64("oid", sess.GetActiveSellExtOrderID()).
+				Str("ext oid", sess.GetActiveSellExtOrderID()).
 				Msg("get order")
 			cancel()
 
 			interrupt <- syscall.SIGINT
+
+			return
 		}
 
 		o, err := s.orderSvc.UpdateOrderStates(ctx, interrupt, reqID)
 		if err != nil || o == nil {
 			s.logger.Err(err).
 				Str("id", sess.ID).
-				Int64("oid", sess.GetActiveSellExtOrderID()).
-				Msg("get order by ext id")
+				Str("ext oid", sess.GetActiveSellExtOrderID()).
+				Msg("get order by ext oid failed")
 			cancel()
 
 			interrupt <- syscall.SIGINT
+
+			return
 		}
 
 		sess.SetActiveSellOrderID(o.ID)
-		sess.SetActiveSellExtOrderID(0)
+		sess.SetActiveSellExtOrderID("")
+		sess.SetActiveSellOrderRequestID("")
 
 		go s.manageOrder(ctx, interrupt, sess, sess.GetActiveSellOrderID())
 	}
@@ -538,8 +556,7 @@ func (s *Spread) listenNewOrders(
 				return err
 			}
 
-			if strconv.FormatInt(sess.GetActiveBuyExtOrderID(), 10) != rid.ID &&
-				strconv.FormatInt(sess.GetActiveSellExtOrderID(), 10) != rid.ID {
+			if sess.GetActiveBuyOrderRequestID() != rid.ID && sess.GetActiveSellOrderRequestID() != rid.ID {
 				continue
 			}
 
@@ -565,15 +582,17 @@ func (s *Spread) listenNewOrders(
 				return err
 			}
 
-			if strconv.FormatInt(sess.GetActiveBuyExtOrderID(), 10) == rid.ID {
+			if sess.GetActiveBuyOrderRequestID() == rid.ID {
 				sess.SetActiveBuyOrderID(co.OrderID)
-				sess.SetActiveBuyExtOrderID(0)
+				sess.SetActiveBuyExtOrderID("")
+				sess.SetActiveBuyOrderRequestID("")
 				s.storage.AddBuyOrder(s.pair, sess.ID, co.OrderID)
 			}
 
-			if strconv.FormatInt(sess.GetActiveSellExtOrderID(), 10) == rid.ID {
+			if sess.GetActiveSellOrderRequestID() == rid.ID {
 				sess.SetActiveSellOrderID(co.OrderID)
-				sess.SetActiveSellExtOrderID(0)
+				sess.SetActiveSellExtOrderID("")
+				sess.SetActiveSellOrderRequestID("")
 				s.storage.AddSellOrder(s.pair, sess.ID, co.OrderID)
 			}
 
@@ -596,31 +615,24 @@ func (s *Spread) checkListenOrderErrors(msg []byte, sess *storage.Session) (bool
 	}
 
 	if er.Error != nil {
-		id, parseErr := strconv.ParseInt(er.ID, 10, 0)
-		if parseErr != nil {
-			s.logger.Err(parseErr).Str("val", er.ID).Msg("parse string as int error")
-
-			return false, err
-		}
-
 		// probably prev order executed on max available amount
 		if er.Error.Code == response.AmountTooSmallCode &&
 			(sess.GetPrevBuyOrderID() != 0 || sess.GetPrevSellOrderID() != 0) {
-			if id == sess.GetActiveBuyExtOrderID() {
+			if er.ID == sess.GetActiveBuyOrderRequestID() {
 				s.logger.Warn().
 					Str("id", sess.ID).
 					Str("pair", s.pair.GetPairName()).
 					Int64("prev oid", sess.GetPrevBuyOrderID()).
-					Int64("ext oid", sess.GetActiveBuyExtOrderID()).
+					Str("ext oid", sess.GetActiveBuyExtOrderID()).
 					Msg("consider prev buy order as executed, allow to place sell order")
 
 				s.setBuyOrderExecutedFlags(sess, s.storage.GetUserOrder(sess.GetPrevBuyOrderID()))
-			} else if id == sess.GetActiveSellExtOrderID() {
+			} else if er.ID == sess.GetActiveSellOrderRequestID() {
 				s.logger.Warn().
 					Str("id", sess.ID).
 					Str("pair", s.pair.GetPairName()).
 					Int64("prev oid", sess.GetPrevSellOrderID()).
-					Int64("ext oid", sess.GetActiveSellExtOrderID()).
+					Str("ext oid", sess.GetActiveSellExtOrderID()).
 					Msg("consider prev sell order as executed, allow to place buy order")
 
 				s.setSellOrderExecutedFlags(sess, s.storage.GetUserOrder(sess.GetPrevSellOrderID()))
@@ -629,17 +641,18 @@ func (s *Spread) checkListenOrderErrors(msg []byte, sess *storage.Session) (bool
 			return true, nil
 		} else if er.Error.Code == response.DoneOrderCode &&
 			(sess.GetPrevBuyOrderID() != 0 || sess.GetPrevSellOrderID() != 0) {
-			if id == sess.GetActiveBuyExtOrderID() {
+			if er.ID == sess.GetActiveBuyOrderRequestID() {
 				o := s.storage.GetUserOrder(sess.GetPrevBuyOrderID())
 				if o.State == dictionary.StateCancelled {
 					s.logger.Warn().
 						Str("id", sess.ID).
 						Str("pair", s.pair.GetPairName()).
 						Int64("prev oid", sess.GetPrevBuyOrderID()).
-						Int64("ext oid", sess.GetActiveBuyExtOrderID()).
+						Str("ext oid", sess.GetActiveBuyExtOrderID()).
 						Msg("altered buy order already cancelled")
 
-					sess.SetActiveBuyExtOrderID(0)
+					sess.SetActiveBuyExtOrderID("")
+					sess.SetActiveBuyOrderRequestID("")
 					sess.IsNeedToCreateBuyOrder.Set()
 
 					return true, nil
@@ -648,24 +661,25 @@ func (s *Spread) checkListenOrderErrors(msg []byte, sess *storage.Session) (bool
 						Str("id", sess.ID).
 						Str("pair", s.pair.GetPairName()).
 						Int64("prev oid", sess.GetPrevBuyOrderID()).
-						Int64("ext oid", sess.GetActiveBuyExtOrderID()).
+						Str("ext oid", sess.GetActiveBuyExtOrderID()).
 						Msg("altered buy order already done")
 
 					s.setBuyOrderExecutedFlags(sess, s.storage.GetUserOrder(sess.GetPrevBuyOrderID()))
 
 					return true, nil
 				}
-			} else if id == sess.GetActiveSellExtOrderID() {
+			} else if er.ID == sess.GetActiveSellOrderRequestID() {
 				o := s.storage.GetUserOrder(sess.GetPrevSellOrderID())
 				if o.State == dictionary.StateCancelled {
 					s.logger.Warn().
 						Str("id", sess.ID).
 						Str("pair", s.pair.GetPairName()).
 						Int64("prev oid", sess.GetPrevSellOrderID()).
-						Int64("ext oid", sess.GetActiveSellExtOrderID()).
+						Str("ext oid", sess.GetActiveSellExtOrderID()).
 						Msg("altered sell order already cancelled")
 
-					sess.SetActiveSellExtOrderID(0)
+					sess.SetActiveSellExtOrderID("")
+					sess.SetActiveSellOrderRequestID("")
 					sess.IsNeedToCreateSellOrder.Set()
 
 					return true, nil
@@ -674,7 +688,7 @@ func (s *Spread) checkListenOrderErrors(msg []byte, sess *storage.Session) (bool
 						Str("id", sess.ID).
 						Str("pair", s.pair.GetPairName()).
 						Int64("prev oid", sess.GetPrevSellOrderID()).
-						Int64("ext oid", sess.GetActiveSellExtOrderID()).
+						Str("ext oid", sess.GetActiveSellExtOrderID()).
 						Msg("altered sell order already done")
 
 					s.setSellOrderExecutedFlags(sess, s.storage.GetUserOrder(sess.GetPrevSellOrderID()))
@@ -723,7 +737,7 @@ func (s *Spread) createBuyOrder(sess *storage.Session) error {
 		return dictionary.ErrInsufficientFunds
 	}
 
-	extID, err := s.wsSvc.CreateOrder(
+	rid, extID, err := s.wsSvc.CreateOrder(
 		s.pair.GetPairName(),
 		amount.Text('f', s.pair.QuantityScale),
 		price.Text('f', s.pair.PriceScale),
@@ -736,6 +750,7 @@ func (s *Spread) createBuyOrder(sess *storage.Session) error {
 	}
 
 	sess.SetActiveBuyExtOrderID(extID)
+	sess.SetActiveBuyOrderRequestID(strconv.FormatInt(rid, 10))
 
 	return nil
 }
@@ -767,7 +782,7 @@ func (s *Spread) createSellOrder(sess *storage.Session) error {
 		return dictionary.ErrInsufficientFunds
 	}
 
-	extID, err := s.wsSvc.CreateOrder(
+	rid, extID, err := s.wsSvc.CreateOrder(
 		s.pair.GetPairName(),
 		amount.Text('f', s.pair.QuantityScale),
 		price.Text('f', s.pair.PriceScale),
@@ -780,6 +795,7 @@ func (s *Spread) createSellOrder(sess *storage.Session) error {
 	}
 
 	sess.SetActiveSellExtOrderID(extID)
+	sess.SetActiveSellOrderRequestID(strconv.FormatInt(rid, 10))
 
 	return nil
 }
@@ -917,7 +933,7 @@ func (s *Spread) manageOrder(ctx context.Context, interrupt chan os.Signal, sess
 					}
 
 					if isBuyAvailable {
-						extID, err := s.moveBuyOrder(orderID)
+						rid, extID, err := s.moveBuyOrder(orderID)
 						if err != nil {
 							s.logger.Fatal().
 								Err(err).
@@ -928,6 +944,7 @@ func (s *Spread) manageOrder(ctx context.Context, interrupt chan os.Signal, sess
 
 						sess.SetPrevBuyOrderID(orderID)
 						sess.SetActiveBuyExtOrderID(extID)
+						sess.SetActiveBuyOrderRequestID(strconv.FormatInt(rid, 10))
 
 						s.orderBook.EventBroker.Publish(0) // don't wait change order book
 					} else {
@@ -1006,13 +1023,14 @@ func (s *Spread) manageOrder(ctx context.Context, interrupt chan os.Signal, sess
 					}
 
 					if isSellAvailable {
-						extID, err := s.moveSellOrder(sess, orderID)
+						rid, extID, err := s.moveSellOrder(sess, orderID)
 						if err != nil {
 							s.logger.Fatal().Err(err).Msg("move sell order")
 						}
 
 						sess.SetPrevSellOrderID(orderID)
 						sess.SetActiveSellExtOrderID(extID)
+						sess.SetActiveSellOrderRequestID(strconv.FormatInt(rid, 10))
 
 						s.orderBook.EventBroker.Publish(0) // don't wait change order book
 					} else {
@@ -1126,15 +1144,15 @@ func (s *Spread) cancelOrder(orderID int64) error {
 	return nil
 }
 
-func (s *Spread) moveBuyOrder(orderID int64) (int64, error) {
+func (s *Spread) moveBuyOrder(orderID int64) (int64, string, error) {
 	amount, total, price, err := s.calculateBuyOrderVolume(orderID)
 	if err != nil {
 		s.logger.Err(err).Msg("calculate buy order volume for alter order")
 
-		return 0, err
+		return 0, "", err
 	}
 
-	extID, err := s.wsSvc.AlterOrder(
+	id, extID, err := s.wsSvc.AlterOrder(
 		s.pair.GetPairName(),
 		amount.Text('f', s.pair.QuantityScale),
 		price.Text('f', s.pair.PriceScale),
@@ -1144,7 +1162,7 @@ func (s *Spread) moveBuyOrder(orderID int64) (int64, error) {
 	if err != nil {
 		s.logger.Err(err).
 			Str("pair", s.pair.GetPairName()).
-			Int64("ext id", extID).
+			Str("ext oid", extID).
 			Int64("prev order id", orderID).
 			Str("spread", s.orderBook.GetSpread().Text('f', s.pair.PriceScale)).
 			Str("price", price.Text('f', s.pair.PriceScale)).
@@ -1152,13 +1170,13 @@ func (s *Spread) moveBuyOrder(orderID int64) (int64, error) {
 			Str("total", total.String()).
 			Msg("alter buy order")
 
-		return 0, err
+		return 0, "", err
 	}
 
 	s.logger.
 		Warn().
 		Str("pair", s.pair.GetPairName()).
-		Int64("ext id", extID).
+		Str("ext oid", extID).
 		Int64("prev order id", orderID).
 		Str("spread", s.orderBook.GetSpread().Text('f', s.pair.PriceScale)).
 		Str("price", price.Text('f', s.pair.PriceScale)).
@@ -1166,18 +1184,18 @@ func (s *Spread) moveBuyOrder(orderID int64) (int64, error) {
 		Str("total", total.String()).
 		Msg("alter buy order")
 
-	return extID, nil
+	return id, extID, nil
 }
 
-func (s *Spread) moveSellOrder(sess *storage.Session, orderID int64) (int64, error) {
+func (s *Spread) moveSellOrder(sess *storage.Session, orderID int64) (int64, string, error) {
 	amount, total, price, err := s.calculateSellOrderVolume(sess, orderID)
 	if err != nil {
 		s.logger.Err(err).Msg("calculate buy order volume for alter order")
 
-		return 0, err
+		return 0, "", err
 	}
 
-	extID, err := s.wsSvc.AlterOrder(
+	id, extID, err := s.wsSvc.AlterOrder(
 		s.pair.GetPairName(),
 		amount.Text('f', s.pair.QuantityScale),
 		price.Text('f', s.pair.PriceScale),
@@ -1195,13 +1213,13 @@ func (s *Spread) moveSellOrder(sess *storage.Session, orderID int64) (int64, err
 			Str("spread", s.calcBuySpread(sess.GetActiveBuyOrderID()).String()).
 			Msg("alter sell order")
 
-		return 0, err
+		return 0, "", err
 	}
 
 	s.logger.
 		Warn().
 		Str("pair", s.pair.GetPairName()).
-		Int64("ext id", extID).
+		Str("ext oid", extID).
 		Int64("prev order id", orderID).
 		Str("spread", s.orderBook.GetSpread().Text('f', s.pair.PriceScale)).
 		Str("price", price.Text('f', s.pair.PriceScale)).
@@ -1209,16 +1227,18 @@ func (s *Spread) moveSellOrder(sess *storage.Session, orderID int64) (int64, err
 		Str("total", total.String()).
 		Msg("alter sell order")
 
-	return extID, nil
+	return id, extID, nil
 }
 
 func (s *Spread) setBuyOrderExecutedFlags(sess *storage.Session, order *storage.Order) {
 	atomic.AddInt64(&s.orderBook.CompletedBuyOrders, 1)
 	sess.SetPrevBuyOrderID(0)
 	sess.SetActiveBuyOrderID(order.ID)
-	sess.SetActiveBuyExtOrderID(0)
+	sess.SetActiveBuyExtOrderID("")
+	sess.SetActiveBuyOrderRequestID("")
 	sess.SetActiveSellOrderID(0)
-	sess.SetActiveSellExtOrderID(0)
+	sess.SetActiveSellExtOrderID("")
+	sess.SetActiveSellOrderRequestID("")
 	sess.IsNeedToCreateSellOrder.Set()
 
 	totalBoughtVolume, ok := s.storage.GetTotalBuyVolume(s.pair, sess.ID)

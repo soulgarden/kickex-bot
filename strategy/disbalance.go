@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/soulgarden/kickex-bot/dictionary"
+
 	"github.com/soulgarden/kickex-bot/broker"
 
 	"github.com/rs/zerolog"
@@ -16,7 +18,8 @@ import (
 	"github.com/soulgarden/kickex-bot/storage"
 )
 
-const sendInterval = 30 * time.Second
+const sendInterval = 60 * time.Second
+const spreadForAlert = 2.7
 
 type Disbalance struct {
 	cfg         *conf.Bot
@@ -124,21 +127,31 @@ func (s *Disbalance) check() {
 			}
 		}
 
+		// 100 - (x * 100 / y)
+		spread := big.NewFloat(0).Sub(
+			dictionary.MaxPercentFloat,
+			big.NewFloat(0).Quo(big.NewFloat(0).Mul(minAskPrice, dictionary.MaxPercentFloat), maxBidPrice),
+		)
+
 		s.logger.Info().
-			Str("base", baseCurrency).
 			Str("bid pair", maxBidPair).
 			Str("max bid price", maxBidPrice.Text('f', 10)).
 			Str("ask pair", minAskPair).
 			Str("min ask price", minAskPrice.Text('f', 10)).
+			Str("spread", spread.Text('f', 2)).
 			Msg("lowest book prices in usd")
 
-		if maxBidPrice.Cmp(minAskPrice) > 0 {
+		if maxBidPrice.Cmp(minAskPrice) > 0 && maxBidPair != minAskPair {
+			if spread.Cmp(big.NewFloat(spreadForAlert)) == -1 {
+				continue
+			}
+
 			s.logger.Warn().
-				Str("base", baseCurrency).
 				Str("bid pair", maxBidPair).
 				Str("max bid price", maxBidPrice.Text('f', 10)).
 				Str("ask pair", minAskPair).
 				Str("min ask price", minAskPrice.Text('f', 10)).
+				Str("spread", spread.Text('f', 2)).
 				Msg("max bid price larger than min ask price")
 
 			now := time.Now()
@@ -147,12 +160,16 @@ func (s *Disbalance) check() {
 
 				s.tgSvc.Send(
 					fmt.Sprintf(
-						`env: %s, max bid price %s larger than min ask price %s, bid pair %s, ask pair %s`,
+						`env: %s,
+max bid price %s larger than min ask price %s,
+bid pair %s, ask pair %s,
+spread %s`,
 						s.cfg.Env,
 						maxBidPrice.Text('f', 10),
 						minAskPrice.Text('f', 10),
 						maxBidPair,
-						maxBidPair,
+						minAskPair,
+						spread.Text('f', 2),
 					))
 			}
 		}

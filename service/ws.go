@@ -80,7 +80,7 @@ func (s *WS) GetPairsAndSubscribe() (int64, error) {
 	return s.cli.GetPairsAndSubscribe()
 }
 
-func (s *WS) CreateOrder(pair, volume, limitPrice string, tradeIntent int) (int64, error) {
+func (s *WS) CreateOrder(pair, volume, limitPrice string, tradeIntent int) (int64, string, error) {
 	return s.cli.CreateOrder(pair, volume, limitPrice, tradeIntent)
 }
 
@@ -92,7 +92,7 @@ func (s *WS) GetOrder(orderID int64) (int64, error) {
 	return s.cli.GetOrder(orderID)
 }
 
-func (s *WS) GetOrderByExtID(extID int64) (int64, error) {
+func (s *WS) GetOrderByExtID(extID string) (int64, error) {
 	return s.cli.GetOrderByExtID(extID)
 }
 
@@ -100,7 +100,7 @@ func (s *WS) GetBalance() (int64, error) {
 	return s.cli.GetBalance()
 }
 
-func (s *WS) AlterOrder(pair, volume, limitPrice string, tradeIntent int, orderID int64) (int64, error) {
+func (s *WS) AlterOrder(pair, volume, limitPrice string, tradeIntent int, orderID int64) (int64, string, error) {
 	return s.cli.AlterOrder(pair, volume, limitPrice, tradeIntent, orderID)
 }
 

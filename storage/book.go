@@ -193,11 +193,11 @@ func (b *Book) NewSession() *Session {
 
 	sess := &Session{
 		ID:                      "",
-		ActiveBuyExtOrderID:     0,
+		ActiveBuyExtOrderID:     goAtomic.String{},
 		ActiveBuyOrderID:        0,
 		PrevBuyOrderID:          0,
 		IsNeedToCreateBuyOrder:  abool.New(),
-		ActiveSellExtOrderID:    0,
+		ActiveSellExtOrderID:    goAtomic.String{},
 		ActiveSellOrderID:       0,
 		PrevSellOrderID:         0,
 		IsNeedToCreateSellOrder: abool.New(),

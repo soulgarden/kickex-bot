@@ -4,20 +4,24 @@ import (
 	"sync/atomic"
 
 	"github.com/tevino/abool"
+
+	goAtomic "go.uber.org/atomic"
 )
 
 type Session struct {
 	ID string `json:"id"`
 
-	ActiveBuyExtOrderID    int64             `json:"active_buy_ext_order_id"`
-	ActiveBuyOrderID       int64             `json:"active_buy_order_id"`
-	PrevBuyOrderID         int64             `json:"prev_buy_order_id"`
-	IsNeedToCreateBuyOrder *abool.AtomicBool `json:"is_need_to_create_buy_order"`
+	activeBuyOrderRequestID goAtomic.String
+	ActiveBuyExtOrderID     goAtomic.String   `json:"active_buy_ext_order_id"`
+	ActiveBuyOrderID        int64             `json:"active_buy_order_id"`
+	PrevBuyOrderID          int64             `json:"prev_buy_order_id"`
+	IsNeedToCreateBuyOrder  *abool.AtomicBool `json:"is_need_to_create_buy_order"`
 
-	ActiveSellExtOrderID    int64             `json:"active_sell_order_id"`
-	ActiveSellOrderID       int64             `json:"active_sell_ext_order_id"`
-	PrevSellOrderID         int64             `json:"prev_sell_order_id"`
-	IsNeedToCreateSellOrder *abool.AtomicBool `json:"is_need_to_create_sell_order"`
+	activeSellOrderRequestID goAtomic.String
+	ActiveSellExtOrderID     goAtomic.String   `json:"active_sell_order_id"`
+	ActiveSellOrderID        int64             `json:"active_sell_ext_order_id"`
+	PrevSellOrderID          int64             `json:"prev_sell_order_id"`
+	IsNeedToCreateSellOrder  *abool.AtomicBool `json:"is_need_to_create_sell_order"`
 
 	BuyOrders  map[int64]int64 `json:"buy_orders"`
 	SellOrders map[int64]int64 `json:"sell_orders"`
@@ -57,26 +61,34 @@ func (s *Session) SetActiveSellOrderID(oid int64) {
 	atomic.StoreInt64(&s.ActiveSellOrderID, oid)
 }
 
-func (s *Session) IsProcessingBuyOrder() bool {
-	return atomic.LoadInt64(&s.ActiveBuyOrderID) == 0 && s.GetActiveBuyExtOrderID() == 0
+func (s *Session) GetActiveBuyExtOrderID() string {
+	return s.ActiveBuyExtOrderID.Load()
 }
 
-func (s *Session) IsProcessingSellOrder() bool {
-	return atomic.LoadInt64(&s.ActiveSellOrderID) == 0 && s.GetActiveSellExtOrderID() == 0
+func (s *Session) SetActiveBuyExtOrderID(extID string) {
+	s.ActiveBuyExtOrderID.Store(extID)
 }
 
-func (s *Session) GetActiveBuyExtOrderID() int64 {
-	return atomic.LoadInt64(&s.ActiveBuyExtOrderID)
+func (s *Session) GetActiveBuyOrderRequestID() string {
+	return s.activeBuyOrderRequestID.Load()
 }
 
-func (s *Session) SetActiveBuyExtOrderID(extID int64) {
-	atomic.StoreInt64(&s.ActiveBuyExtOrderID, extID)
+func (s *Session) SetActiveBuyOrderRequestID(rid string) {
+	s.activeBuyOrderRequestID.Store(rid)
 }
 
-func (s *Session) GetActiveSellExtOrderID() int64 {
-	return atomic.LoadInt64(&s.ActiveSellExtOrderID)
+func (s *Session) GetActiveSellExtOrderID() string {
+	return s.ActiveSellExtOrderID.Load()
 }
 
-func (s *Session) SetActiveSellExtOrderID(extID int64) {
-	atomic.StoreInt64(&s.ActiveSellExtOrderID, extID)
+func (s *Session) SetActiveSellExtOrderID(extID string) {
+	s.ActiveSellExtOrderID.Store(extID)
+}
+
+func (s *Session) GetActiveSellOrderRequestID() string {
+	return s.activeSellOrderRequestID.Load()
+}
+
+func (s *Session) SetActiveSellOrderRequestID(rid string) {
+	s.activeSellOrderRequestID.Store(rid)
 }
