@@ -24,8 +24,7 @@ type Book struct {
 	Sessions        map[string]*Session `json:"session"`
 	ActiveSessionID goAtomic.String
 
-	CompletedBuyOrders  int64
-	CompletedSellOrders int64
+	Profit *big.Float `json:"profit"`
 
 	bids map[string]*BookOrder
 	asks map[string]*BookOrder
@@ -187,24 +186,48 @@ func (b *Book) UpdateMinAskPrice() bool {
 	return true
 }
 
+func (b *Book) GetProfit() *big.Float {
+	b.mx.RLock()
+	defer b.mx.RUnlock()
+
+	return b.Profit
+}
+
+func (b *Book) SubProfit(v *big.Float) {
+	b.mx.Lock()
+	defer b.mx.Unlock()
+
+	b.Profit.Sub(b.Profit, v)
+}
+
+func (b *Book) AddProfit(v *big.Float) {
+	b.mx.Lock()
+	defer b.mx.Unlock()
+
+	b.Profit.Add(b.Profit, v)
+}
+
 func (b *Book) NewSession() *Session {
 	b.mx.Lock()
 	defer b.mx.Unlock()
 
 	sess := &Session{
-		ID:                      "",
-		ActiveBuyExtOrderID:     goAtomic.String{},
-		ActiveBuyOrderID:        0,
-		PrevBuyOrderID:          0,
-		IsNeedToCreateBuyOrder:  abool.New(),
-		ActiveSellExtOrderID:    goAtomic.String{},
-		ActiveSellOrderID:       0,
-		PrevSellOrderID:         0,
-		IsNeedToCreateSellOrder: abool.New(),
-
-		BuyOrders:  map[int64]int64{},
-		SellOrders: map[int64]int64{},
-		IsDone:     abool.New(),
+		ID:                       "",
+		activeBuyOrderRequestID:  goAtomic.String{},
+		ActiveBuyExtOrderID:      goAtomic.String{},
+		ActiveBuyOrderID:         0,
+		PrevBuyOrderID:           0,
+		IsNeedToCreateBuyOrder:   abool.New(),
+		activeSellOrderRequestID: goAtomic.String{},
+		ActiveSellExtOrderID:     goAtomic.String{},
+		ActiveSellOrderID:        0,
+		PrevSellOrderID:          0,
+		IsNeedToCreateSellOrder:  abool.New(),
+		CompletedBuyOrders:       goAtomic.Int64{},
+		CompletedSellOrders:      goAtomic.Int64{},
+		BuyOrders:                map[int64]int64{},
+		SellOrders:               map[int64]int64{},
+		IsDone:                   abool.New(),
 	}
 
 	sess.ID = uuid.NewV4().String()

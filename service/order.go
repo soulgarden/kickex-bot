@@ -45,12 +45,15 @@ func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan os.Signal
 	eventsCh := s.eventBroker.Subscribe()
 	defer s.eventBroker.Unsubscribe(eventsCh)
 
-	oNumber := len(s.storage.GetUserOrders())
 	oNumberProcessed := 0
 
 	reqIds := map[string]bool{}
 
 	for _, o := range s.storage.GetUserOrders() {
+		if o.State > dictionary.StateActive {
+			continue
+		}
+
 		id, err := s.wsSvc.GetOrder(o.ID)
 		if err != nil {
 			s.logger.Err(err).Msg("get order")
@@ -62,6 +65,8 @@ func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan os.Signal
 
 		reqIds[strconv.FormatInt(id, 10)] = true
 	}
+
+	oNumber := len(reqIds)
 
 	for {
 		select {
@@ -121,7 +126,7 @@ func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan os.Signal
 	}
 }
 
-func (s *Order) UpdateOrderStates(ctx context.Context, interrupt chan os.Signal, rid int64) (*storage.Order, error) {
+func (s *Order) UpdateOrderState(ctx context.Context, interrupt chan os.Signal, rid int64) (*storage.Order, error) {
 	eventsCh := s.eventBroker.Subscribe()
 	defer s.eventBroker.Unsubscribe(eventsCh)
 

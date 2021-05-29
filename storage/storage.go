@@ -6,6 +6,8 @@ import (
 	"math/big"
 	"sync"
 
+	goAtomic "go.uber.org/atomic"
+
 	"github.com/soulgarden/kickex-bot/broker"
 
 	"github.com/soulgarden/kickex-bot/dictionary"
@@ -18,12 +20,12 @@ type Storage struct {
 	pairs  map[string]*response.Pair
 
 	userOrdersMx sync.RWMutex
-	UserOrders   map[int64]*Order
+	UserOrders   map[int64]*Order `json:"user_orders"`
 
 	balanceMx sync.RWMutex
 	balances  map[string]*Balance
 
-	Deals []*response.Deal
+	Deals []*response.Deal `json:"deals"`
 
 	orderBooksMx sync.RWMutex
 	OrderBooks   map[string]map[string]*Book `json:"order_books"` // base/quoted
@@ -31,12 +33,15 @@ type Storage struct {
 
 func NewStorage() *Storage {
 	return &Storage{
-		pairMx:     sync.RWMutex{},
-		pairs:      make(map[string]*response.Pair),
-		UserOrders: map[int64]*Order{},
-		balances:   map[string]*Balance{},
-		Deals:      []*response.Deal{},
-		OrderBooks: make(map[string]map[string]*Book),
+		pairMx:       sync.RWMutex{},
+		pairs:        make(map[string]*response.Pair),
+		userOrdersMx: sync.RWMutex{},
+		UserOrders:   map[int64]*Order{},
+		balanceMx:    sync.RWMutex{},
+		balances:     map[string]*Balance{},
+		Deals:        []*response.Deal{},
+		orderBooksMx: sync.RWMutex{},
+		OrderBooks:   make(map[string]map[string]*Book),
 	}
 }
 
@@ -50,17 +55,17 @@ func (s *Storage) RegisterOrderBook(pair *response.Pair, eventBroker *broker.Bro
 
 	if _, ok := s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency]; !ok {
 		s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency] = &Book{
-			mx:                  sync.RWMutex{},
-			maxBidPrice:         &big.Float{},
-			minAskPrice:         &big.Float{},
-			LastPrice:           "",
-			Spread:              &big.Float{},
-			Sessions:            make(map[string]*Session),
-			CompletedBuyOrders:  0,
-			CompletedSellOrders: 0,
-			bids:                make(map[string]*BookOrder),
-			asks:                make(map[string]*BookOrder),
-			EventBroker:         eventBroker,
+			mx:              sync.RWMutex{},
+			maxBidPrice:     &big.Float{},
+			minAskPrice:     &big.Float{},
+			LastPrice:       "",
+			Spread:          &big.Float{},
+			Sessions:        make(map[string]*Session),
+			ActiveSessionID: goAtomic.String{},
+			Profit:          big.NewFloat(0),
+			bids:            make(map[string]*BookOrder),
+			asks:            make(map[string]*BookOrder),
+			EventBroker:     eventBroker,
 		}
 	} else { // loaded from dump
 		book := s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency]
@@ -156,7 +161,7 @@ func (s *Storage) AddSellOrder(pair *response.Pair, sid string, oid int64) {
 	s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency].Sessions[sid].SellOrders[oid] = oid
 }
 
-func (s *Storage) GetTotalBuyVolume(pair *response.Pair, sid string) (*big.Float, bool) {
+func (s *Storage) GetSessTotalBuyVolume(pair *response.Pair, sid string) *big.Float {
 	s.orderBooksMx.RLock()
 	defer s.orderBooksMx.RUnlock()
 
@@ -170,10 +175,27 @@ func (s *Storage) GetTotalBuyVolume(pair *response.Pair, sid string) (*big.Float
 		total.Add(total, s.UserOrders[oid].TotalBuyVolume)
 	}
 
-	return total, true
+	return total
 }
 
-func (s *Storage) GetTotalSellVolume(pair *response.Pair, sid string) (*big.Float, bool) {
+func (s *Storage) GetSessTotalBuyCost(pair *response.Pair, sid string) *big.Float {
+	s.orderBooksMx.RLock()
+	defer s.orderBooksMx.RUnlock()
+
+	total := big.NewFloat(0)
+
+	for _, oid := range s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency].Sessions[sid].BuyOrders {
+		if s.UserOrders[oid].TotalBuyVolume.Cmp(dictionary.ZeroBigFloat) == 0 {
+			continue
+		}
+
+		total.Add(total, big.NewFloat(0).Mul(s.UserOrders[oid].TotalBuyVolume, s.UserOrders[oid].LimitPrice))
+	}
+
+	return total
+}
+
+func (s *Storage) GetSessTotalSellVolume(pair *response.Pair, sid string) *big.Float {
 	s.orderBooksMx.RLock()
 	defer s.orderBooksMx.RUnlock()
 
@@ -187,7 +209,28 @@ func (s *Storage) GetTotalSellVolume(pair *response.Pair, sid string) (*big.Floa
 		total.Add(total, s.UserOrders[oid].TotalSellVolume)
 	}
 
-	return total, true
+	return total
+}
+
+func (s *Storage) GetSessTotalSellCost(pair *response.Pair, sid string) *big.Float {
+	s.orderBooksMx.RLock()
+	defer s.orderBooksMx.RUnlock()
+
+	total := big.NewFloat(0)
+
+	for _, oid := range s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency].Sessions[sid].SellOrders {
+		if s.UserOrders[oid].TotalSellVolume.Cmp(dictionary.ZeroBigFloat) == 0 {
+			continue
+		}
+
+		total.Add(total, big.NewFloat(0).Mul(s.UserOrders[oid].TotalSellVolume, s.UserOrders[oid].LimitPrice))
+	}
+
+	return total
+}
+
+func (s *Storage) GetSessProfit(pair *response.Pair, sid string) *big.Float {
+	return big.NewFloat(0).Sub(s.GetSessTotalSellCost(pair, sid), s.GetSessTotalBuyCost(pair, sid))
 }
 
 func (s *Storage) CleanUpOldOrders() {

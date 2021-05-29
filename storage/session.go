@@ -23,6 +23,9 @@ type Session struct {
 	PrevSellOrderID          int64             `json:"prev_sell_order_id"`
 	IsNeedToCreateSellOrder  *abool.AtomicBool `json:"is_need_to_create_sell_order"`
 
+	CompletedBuyOrders  goAtomic.Int64 `json:"completed_buy_orders"`
+	CompletedSellOrders goAtomic.Int64 `json:"completed_sell_orders"`
+
 	BuyOrders  map[int64]int64 `json:"buy_orders"`
 	SellOrders map[int64]int64 `json:"sell_orders"`
 
