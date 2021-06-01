@@ -23,7 +23,7 @@ import (
 
 type OrderBook struct {
 	cfg         *conf.Bot
-	pair        *response.Pair
+	pair        *storage.Pair
 	storage     *storage.Storage
 	eventBroker *broker.Broker
 	wsSvc       *service.WS
@@ -36,7 +36,7 @@ func NewOrderBook(
 	st *storage.Storage,
 	eventBroker *broker.Broker,
 	wsSvc *service.WS,
-	pair *response.Pair,
+	pair *storage.Pair,
 	orderBook *storage.Book,
 	logger *zerolog.Logger,
 ) *OrderBook {

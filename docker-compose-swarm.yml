@@ -2,7 +2,7 @@ version: '3'
 
 services:
   disbalance:
-    image: soulgarden/kickex-bot:1.0.44
+    image: soulgarden/kickex-bot:1.0.45
     environment:
       CFG_PATH: /conf.local.json
     stop_signal: SIGINT
@@ -12,7 +12,7 @@ services:
     command: [ "/bin/bot", "disbalance" ]
 
   spread:
-    image: soulgarden/kickex-bot:1.0.44
+    image: soulgarden/kickex-bot:1.0.45
     environment:
       CFG_PATH: /conf.local.json
     stop_signal: SIGINT
@@ -21,10 +21,20 @@ services:
       - ./storage:/storage
 
   spread_kishu:
-    image: soulgarden/kickex-bot:1.0.44
+    image: soulgarden/kickex-bot:1.0.45
     environment:
       CFG_PATH: /conf.local.json
     stop_signal: SIGINT
     volumes:
       - ./conf/kishu.conf.remote.json:/conf.local.json
       - ./storage:/storage
+
+  spread_shib:
+    image: soulgarden/kickex-bot:1.0.45
+    environment:
+      CFG_PATH: /conf.local.json
+    stop_signal: SIGINT
+    volumes:
+      - ./conf/shib.conf.remote.json:/conf.local.json
+      - ./storage:/storage
+

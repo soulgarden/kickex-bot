@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,7 +39,7 @@ var disbalanceCmd = &cobra.Command{
 		}
 
 		logger := zerolog.New(os.Stdout).Level(defaultLogLevel).With().Caller().Logger()
-		wsEventBroker := broker.NewBroker()
+		wsEventBroker := broker.New()
 		st := storage.NewStorage()
 		wsSvc := service.NewWS(cfg, wsEventBroker, &logger)
 		balanceSvc := service.NewBalance(st, wsEventBroker, wsSvc, &logger)
@@ -60,14 +61,14 @@ var disbalanceCmd = &cobra.Command{
 		go wsSvc.Start(ctx, interrupt)
 		go wsEventBroker.Start()
 
-		accounting := subscriber.NewAccounting(cfg, st, wsEventBroker, wsSvc, balanceSvc, &logger)
-		pairs := subscriber.NewPairs(cfg, st, wsEventBroker, wsSvc, &logger)
+		accountingSub := subscriber.NewAccounting(cfg, st, wsEventBroker, wsSvc, balanceSvc, &logger)
+		pairsSub := subscriber.NewPairs(cfg, st, wsEventBroker, wsSvc, &logger)
 
 		var wg sync.WaitGroup
 
 		wg.Add(1)
 
-		go pairs.Start(ctx, interrupt, &wg)
+		go pairsSub.Start(ctx, interrupt, &wg)
 
 		time.Sleep(pairsWaitingDuration) // wait for pairs filling
 
@@ -85,11 +86,25 @@ var disbalanceCmd = &cobra.Command{
 		tgSvc.Send(fmt.Sprintf("env: %s, disbalance bot starting", cfg.Env))
 
 		wg.Add(1)
-		go accounting.Start(ctx, interrupt, &wg)
+		go accountingSub.Start(ctx, interrupt, &wg)
 
 		dis := strategy.NewDisbalance(cfg, st, wsEventBroker, service.NewConversion(st, &logger), tgSvc, &logger)
 
+		pairs := make(map[string]bool)
 		for _, pairName := range cfg.TrackingPairs {
+			pair := strings.Split(pairName, "/")
+
+			pairs[pair[0]+"/"+pair[1]] = true
+
+			if pair[0] == dictionary.USDT || pair[1] == dictionary.USDT {
+				continue
+			}
+
+			pairs[pair[0]+"/"+dictionary.USDT] = true
+			pairs[pair[1]+"/"+dictionary.USDT] = true
+		}
+
+		for pairName := range pairs {
 			pair := st.GetPair(pairName)
 			if pair == nil {
 				logger.
@@ -102,7 +117,7 @@ var disbalanceCmd = &cobra.Command{
 				break
 			}
 
-			orderBookEventBroker := broker.NewBroker()
+			orderBookEventBroker := broker.New()
 			go orderBookEventBroker.Start()
 
 			orderBook := st.RegisterOrderBook(pair, orderBookEventBroker)

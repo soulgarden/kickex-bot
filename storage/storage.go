@@ -17,37 +17,35 @@ import (
 
 type Storage struct {
 	pairMx sync.RWMutex
-	pairs  map[string]*response.Pair
+	pairs  map[string]*Pair
 
-	userOrdersMx sync.RWMutex
-	UserOrders   map[int64]*Order `json:"user_orders"`
+	ordersMx   sync.RWMutex
+	UserOrders map[int64]*Order `json:"user_orders"`
 
 	balanceMx sync.RWMutex
 	balances  map[string]*Balance
 
 	Deals []*response.Deal `json:"deals"`
 
-	orderBooksMx sync.RWMutex
-	OrderBooks   map[string]map[string]*Book `json:"order_books"` // base/quoted
+	OrderBooks map[string]map[string]*Book `json:"order_books"` // base/quoted
 }
 
 func NewStorage() *Storage {
 	return &Storage{
-		pairMx:       sync.RWMutex{},
-		pairs:        make(map[string]*response.Pair),
-		userOrdersMx: sync.RWMutex{},
-		UserOrders:   map[int64]*Order{},
-		balanceMx:    sync.RWMutex{},
-		balances:     map[string]*Balance{},
-		Deals:        []*response.Deal{},
-		orderBooksMx: sync.RWMutex{},
-		OrderBooks:   make(map[string]map[string]*Book),
+		pairMx:     sync.RWMutex{},
+		pairs:      make(map[string]*Pair),
+		ordersMx:   sync.RWMutex{},
+		UserOrders: map[int64]*Order{},
+		balanceMx:  sync.RWMutex{},
+		balances:   map[string]*Balance{},
+		Deals:      []*response.Deal{},
+		OrderBooks: make(map[string]map[string]*Book),
 	}
 }
 
-func (s *Storage) RegisterOrderBook(pair *response.Pair, eventBroker *broker.Broker) *Book {
-	s.orderBooksMx.Lock()
-	defer s.orderBooksMx.Unlock()
+func (s *Storage) RegisterOrderBook(pair *Pair, eventBroker *broker.Broker) *Book {
+	s.ordersMx.Lock()
+	defer s.ordersMx.Unlock()
 
 	if _, ok := s.OrderBooks[pair.BaseCurrency]; !ok {
 		s.OrderBooks[pair.BaseCurrency] = make(map[string]*Book)
@@ -101,8 +99,8 @@ func (s *Storage) UpsertBalance(currency string, balance *Balance) {
 }
 
 func (s *Storage) GetUserOrder(id int64) *Order {
-	s.userOrdersMx.RLock()
-	defer s.userOrdersMx.RUnlock()
+	s.ordersMx.RLock()
+	defer s.ordersMx.RUnlock()
 
 	order, ok := s.UserOrders[id]
 	if !ok {
@@ -113,20 +111,20 @@ func (s *Storage) GetUserOrder(id int64) *Order {
 }
 
 func (s *Storage) GetUserOrders() map[int64]*Order {
-	s.userOrdersMx.RLock()
-	defer s.userOrdersMx.RUnlock()
+	s.ordersMx.RLock()
+	defer s.ordersMx.RUnlock()
 
 	return s.UserOrders
 }
 
 func (s *Storage) UpsertUserOrder(order *Order) {
-	s.userOrdersMx.Lock()
-	defer s.userOrdersMx.Unlock()
+	s.ordersMx.Lock()
+	defer s.ordersMx.Unlock()
 
 	s.UserOrders[order.ID] = order
 }
 
-func (s *Storage) UpdatePairs(pairs []*response.Pair) {
+func (s *Storage) UpdatePairs(pairs []*Pair) {
 	s.pairMx.Lock()
 	defer s.pairMx.Unlock()
 
@@ -135,7 +133,7 @@ func (s *Storage) UpdatePairs(pairs []*response.Pair) {
 	}
 }
 
-func (s *Storage) GetPair(pairName string) *response.Pair {
+func (s *Storage) GetPair(pairName string) *Pair {
 	s.pairMx.RLock()
 	defer s.pairMx.RUnlock()
 
@@ -147,23 +145,23 @@ func (s *Storage) GetPair(pairName string) *response.Pair {
 	return pair
 }
 
-func (s *Storage) AddBuyOrder(pair *response.Pair, sid string, oid int64) {
-	s.orderBooksMx.Lock()
-	defer s.orderBooksMx.Unlock()
+func (s *Storage) AddBuyOrder(pair *Pair, sid string, oid int64) {
+	s.ordersMx.Lock()
+	defer s.ordersMx.Unlock()
 
 	s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency].Sessions[sid].BuyOrders[oid] = oid
 }
 
-func (s *Storage) AddSellOrder(pair *response.Pair, sid string, oid int64) {
-	s.orderBooksMx.Lock()
-	defer s.orderBooksMx.Unlock()
+func (s *Storage) AddSellOrder(pair *Pair, sid string, oid int64) {
+	s.ordersMx.Lock()
+	defer s.ordersMx.Unlock()
 
 	s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency].Sessions[sid].SellOrders[oid] = oid
 }
 
-func (s *Storage) GetSessTotalBuyVolume(pair *response.Pair, sid string) *big.Float {
-	s.orderBooksMx.RLock()
-	defer s.orderBooksMx.RUnlock()
+func (s *Storage) GetSessTotalBoughtVolume(pair *Pair, sid string) *big.Float {
+	s.ordersMx.RLock()
+	defer s.ordersMx.RUnlock()
 
 	total := big.NewFloat(0)
 
@@ -178,9 +176,9 @@ func (s *Storage) GetSessTotalBuyVolume(pair *response.Pair, sid string) *big.Fl
 	return total
 }
 
-func (s *Storage) GetSessTotalBuyCost(pair *response.Pair, sid string) *big.Float {
-	s.orderBooksMx.RLock()
-	defer s.orderBooksMx.RUnlock()
+func (s *Storage) GetSessTotalBoughtCost(pair *Pair, sid string) *big.Float {
+	s.ordersMx.RLock()
+	defer s.ordersMx.RUnlock()
 
 	total := big.NewFloat(0)
 
@@ -195,9 +193,9 @@ func (s *Storage) GetSessTotalBuyCost(pair *response.Pair, sid string) *big.Floa
 	return total
 }
 
-func (s *Storage) GetSessTotalSellVolume(pair *response.Pair, sid string) *big.Float {
-	s.orderBooksMx.RLock()
-	defer s.orderBooksMx.RUnlock()
+func (s *Storage) GetSessTotalSoldVolume(pair *Pair, sid string) *big.Float {
+	s.ordersMx.RLock()
+	defer s.ordersMx.RUnlock()
 
 	total := big.NewFloat(0)
 
@@ -212,9 +210,9 @@ func (s *Storage) GetSessTotalSellVolume(pair *response.Pair, sid string) *big.F
 	return total
 }
 
-func (s *Storage) GetSessTotalSellCost(pair *response.Pair, sid string) *big.Float {
-	s.orderBooksMx.RLock()
-	defer s.orderBooksMx.RUnlock()
+func (s *Storage) GetSessTotalSoldCost(pair *Pair, sid string) *big.Float {
+	s.ordersMx.RLock()
+	defer s.ordersMx.RUnlock()
 
 	total := big.NewFloat(0)
 
@@ -229,15 +227,18 @@ func (s *Storage) GetSessTotalSellCost(pair *response.Pair, sid string) *big.Flo
 	return total
 }
 
-func (s *Storage) GetSessProfit(pair *response.Pair, sid string) *big.Float {
-	return big.NewFloat(0).Sub(s.GetSessTotalSellCost(pair, sid), s.GetSessTotalBuyCost(pair, sid))
+func (s *Storage) GetSessProfit(pair *Pair, sid string) *big.Float {
+	return big.NewFloat(0).Sub(s.GetSessTotalSoldCost(pair, sid), s.GetSessTotalBoughtCost(pair, sid))
 }
 
 func (s *Storage) CleanUpOldOrders() {
+	s.ordersMx.Lock()
+	defer s.ordersMx.Unlock()
+
 	for _, baseCurrency := range s.OrderBooks {
 		for _, book := range baseCurrency {
 			for _, sess := range book.Sessions {
-				if sess.IsDone.IsNotSet() {
+				if !sess.IsDone {
 					continue
 				}
 

@@ -6,10 +6,8 @@ import (
 	"strconv"
 	"sync"
 
-	uuid "github.com/satori/go.uuid"
 	"github.com/soulgarden/kickex-bot/broker"
 	"github.com/soulgarden/kickex-bot/dictionary"
-	"github.com/tevino/abool"
 	goAtomic "go.uber.org/atomic"
 )
 
@@ -207,33 +205,13 @@ func (b *Book) AddProfit(v *big.Float) {
 	b.Profit.Add(b.Profit, v)
 }
 
-func (b *Book) NewSession() *Session {
+func (b *Book) NewSession(buyVolume *big.Float) *Session {
 	b.mx.Lock()
 	defer b.mx.Unlock()
 
-	sess := &Session{
-		ID:                       "",
-		activeBuyOrderRequestID:  goAtomic.String{},
-		ActiveBuyExtOrderID:      goAtomic.String{},
-		ActiveBuyOrderID:         0,
-		PrevBuyOrderID:           0,
-		IsNeedToCreateBuyOrder:   abool.New(),
-		activeSellOrderRequestID: goAtomic.String{},
-		ActiveSellExtOrderID:     goAtomic.String{},
-		ActiveSellOrderID:        0,
-		PrevSellOrderID:          0,
-		IsNeedToCreateSellOrder:  abool.New(),
-		CompletedBuyOrders:       goAtomic.Int64{},
-		CompletedSellOrders:      goAtomic.Int64{},
-		BuyOrders:                map[int64]int64{},
-		SellOrders:               map[int64]int64{},
-		IsDone:                   abool.New(),
-	}
+	sess := NewSession(buyVolume)
 
-	sess.ID = uuid.NewV4().String()
 	b.ActiveSessionID.Store(sess.ID)
-
-	sess.IsNeedToCreateBuyOrder.Set()
 
 	b.Sessions[sess.ID] = sess
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"os"
 	"strconv"
 	"sync"
@@ -112,7 +113,42 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan os.Signal, wg *sync.Wa
 				return
 			}
 
-			s.storage.UpdatePairs(r.Pairs)
+			pairs := []*storage.Pair{}
+
+			for _, pair := range r.Pairs {
+				p := &storage.Pair{
+					BaseCurrency:    pair.BaseCurrency,
+					QuoteCurrency:   pair.QuoteCurrency,
+					Price:           pair.Price,
+					Price24hChange:  pair.Price24hChange,
+					Volume24hChange: pair.Volume24hChange,
+					Amount24hChange: pair.Amount24hChange,
+					LowPrice24h:     pair.LowPrice24h,
+					HighPrice24h:    pair.HighPrice24h,
+					PriceScale:      pair.PriceScale,
+					QuantityScale:   pair.QuantityScale,
+					VolumeScale:     pair.VolumeScale,
+					MinQuantity:     pair.MinQuantity,
+					State:           pair.State,
+				}
+
+				minVolume, ok := big.NewFloat(0).SetString(pair.MinVolume)
+				if !ok {
+					s.logger.Err(dictionary.ErrParseFloat).
+						Str("val", pair.MinVolume).
+						Msg("parse string as float")
+
+					interrupt <- syscall.SIGSTOP
+
+					return
+				}
+
+				p.MinVolume = minVolume
+
+				pairs = append(pairs, p)
+			}
+
+			s.storage.UpdatePairs(pairs)
 
 		case <-ctx.Done():
 			interrupt <- syscall.SIGSTOP

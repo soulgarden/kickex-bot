@@ -9,7 +9,7 @@ type Broker struct {
 	publishCh   chan interface{}
 }
 
-func NewBroker() *Broker {
+func New() *Broker {
 	return &Broker{
 		subscribers: make(map[chan interface{}]struct{}),
 		subCh:       make(chan chan interface{}, 1),

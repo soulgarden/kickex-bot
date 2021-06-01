@@ -43,7 +43,7 @@ var spreadCmd = &cobra.Command{
 		}
 
 		logger := zerolog.New(os.Stdout).Level(defaultLogLevel).With().Caller().Logger()
-		wsEventBroker := broker.NewBroker()
+		wsEventBroker := broker.New()
 		st := storage.NewStorage()
 		wsSvc := service.NewWS(cfg, wsEventBroker, &logger)
 		orderSvc := service.NewOrder(cfg, st, wsEventBroker, wsSvc, &logger)
@@ -151,7 +151,7 @@ var spreadCmd = &cobra.Command{
 				break
 			}
 
-			orderBookEventBroker := broker.NewBroker()
+			orderBookEventBroker := broker.New()
 			go orderBookEventBroker.Start()
 
 			orderBook := st.RegisterOrderBook(pair, orderBookEventBroker)
