@@ -30,10 +30,8 @@ type Session struct {
 	CompletedSellOrders goAtomic.Int64 `json:"completed_sell_orders"`
 
 	BuyTotal *big.Float `json:"buy_total"`
-	//BoughtTotal *big.Float `json:"bought_total"`
 
 	SellVolume *big.Float `json:"sell_total"`
-	//SoldVolume *big.Float `json:"sold_total"`
 
 	BuyOrders  map[int64]int64 `json:"buy_orders"`
 	SellOrders map[int64]int64 `json:"sell_orders"`

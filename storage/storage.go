@@ -6,8 +6,6 @@ import (
 	"math/big"
 	"sync"
 
-	goAtomic "go.uber.org/atomic"
-
 	"github.com/soulgarden/kickex-bot/broker"
 
 	"github.com/soulgarden/kickex-bot/dictionary"
@@ -52,28 +50,10 @@ func (s *Storage) RegisterOrderBook(pair *Pair, eventBroker *broker.Broker) *Boo
 	}
 
 	if _, ok := s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency]; !ok {
-		s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency] = &Book{
-			mx:              sync.RWMutex{},
-			maxBidPrice:     &big.Float{},
-			minAskPrice:     &big.Float{},
-			LastPrice:       "",
-			Spread:          &big.Float{},
-			Sessions:        make(map[string]*Session),
-			ActiveSessionID: goAtomic.String{},
-			Profit:          big.NewFloat(0),
-			bids:            make(map[string]*BookOrder),
-			asks:            make(map[string]*BookOrder),
-			EventBroker:     eventBroker,
-		}
+		s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency] = NewBook(pair, eventBroker)
 	} else { // loaded from dump
 		book := s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency]
-		book.mx = sync.RWMutex{}
-		book.maxBidPrice = &big.Float{}
-		book.minAskPrice = &big.Float{}
-		book.Spread = &big.Float{}
-		book.bids = make(map[string]*BookOrder)
-		book.asks = make(map[string]*BookOrder)
-		book.EventBroker = eventBroker
+		ResetDumpedBook(book, pair, eventBroker)
 	}
 
 	return s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency]

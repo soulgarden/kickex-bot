@@ -17,3 +17,5 @@ var ErrOrderNotFoundOrOutdated = errors.New("order not found or outdated")
 var ErrCantConvertInterfaceToBytes = errors.New("can't convert interface to bytes")
 
 var ErrInsufficientFunds = errors.New("insufficient funds")
+
+var ErrUpdateOrderStateTimeout = errors.New("update order state timeout")

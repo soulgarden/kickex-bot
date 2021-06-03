@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"time"
 
@@ -26,8 +25,8 @@ import (
 const pairsWaitingDuration = 5 * time.Second
 
 //nolint: gochecknoglobals
-var disbalanceCmd = &cobra.Command{
-	Use:   "disbalance",
+var arbitrageCmd = &cobra.Command{
+	Use:   "arbitrage",
 	Short: "Start bot for kickex exchange that search price disbalance in pairs",
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -88,21 +87,9 @@ var disbalanceCmd = &cobra.Command{
 		wg.Add(1)
 		go accountingSub.Start(ctx, interrupt, &wg)
 
-		dis := strategy.NewDisbalance(cfg, st, wsEventBroker, service.NewConversion(st, &logger), tgSvc, &logger)
+		arb := strategy.New(cfg, st, wsEventBroker, service.NewConversion(st, &logger), tgSvc, &logger)
 
-		pairs := make(map[string]bool)
-		for _, pairName := range cfg.TrackingPairs {
-			pair := strings.Split(pairName, "/")
-
-			pairs[pair[0]+"/"+pair[1]] = true
-
-			if pair[0] == dictionary.USDT || pair[1] == dictionary.USDT {
-				continue
-			}
-
-			pairs[pair[0]+"/"+dictionary.USDT] = true
-			pairs[pair[1]+"/"+dictionary.USDT] = true
-		}
+		pairs := arb.GetPairsList()
 
 		for pairName := range pairs {
 			pair := st.GetPair(pairName)
@@ -129,7 +116,7 @@ var disbalanceCmd = &cobra.Command{
 		time.Sleep(pairsWaitingDuration)
 
 		wg.Add(1)
-		go dis.Start(ctx, &wg, interrupt)
+		go arb.Start(ctx, &wg, interrupt)
 
 		go func() {
 			<-interrupt
@@ -139,6 +126,8 @@ var disbalanceCmd = &cobra.Command{
 			cancel()
 
 			<-time.After(ShutDownDuration)
+
+			logger.Warn().Msg("killed by shutdown timeout")
 
 			os.Exit(1)
 		}()

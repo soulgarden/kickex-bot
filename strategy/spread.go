@@ -764,7 +764,7 @@ func (s *Spread) manageOrder(ctx context.Context, interrupt chan os.Signal, sess
 			if order == nil {
 				s.logger.Warn().Int64("oid", orderID).Msg("order not found")
 
-				if startedTime.Add(time.Minute).Before(time.Now()) {
+				if startedTime.Add(time.Second * 10).Before(time.Now()) {
 					s.logger.Error().Msg("order creation event not received")
 
 					s.tgSvc.Send(fmt.Sprintf(
@@ -774,7 +774,7 @@ pair: %s,
 id: %d`,
 						s.cfg.Env,
 						s.pair.GetPairName(),
-						order.ID,
+						orderID,
 					))
 
 					interrupt <- syscall.SIGSTOP

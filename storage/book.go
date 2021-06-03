@@ -28,6 +28,37 @@ type Book struct {
 	asks map[string]*BookOrder
 
 	EventBroker *broker.Broker
+	pair        *Pair
+}
+
+func NewBook(pair *Pair, eventBroker *broker.Broker) *Book {
+	return &Book{
+		mx:              sync.RWMutex{},
+		maxBidPrice:     &big.Float{},
+		minAskPrice:     &big.Float{},
+		LastPrice:       "",
+		Spread:          &big.Float{},
+		Sessions:        make(map[string]*Session),
+		ActiveSessionID: goAtomic.String{},
+		Profit:          big.NewFloat(0),
+		bids:            make(map[string]*BookOrder),
+		asks:            make(map[string]*BookOrder),
+		EventBroker:     eventBroker,
+		pair:            pair,
+	}
+}
+
+func ResetDumpedBook(book *Book, pair *Pair, eventBroker *broker.Broker) *Book {
+	book.mx = sync.RWMutex{}
+	book.maxBidPrice = &big.Float{}
+	book.minAskPrice = &big.Float{}
+	book.Spread = &big.Float{}
+	book.bids = make(map[string]*BookOrder)
+	book.asks = make(map[string]*BookOrder)
+	book.EventBroker = eventBroker
+	book.pair = pair
+
+	return book
 }
 
 func (b *Book) GetSpread() *big.Float {
@@ -85,6 +116,18 @@ func (b *Book) GetBid(price string) *BookOrder {
 	return val
 }
 
+func (b *Book) GetMaxBid() *BookOrder {
+	b.mx.RLock()
+	defer b.mx.RUnlock()
+
+	val, ok := b.bids[b.maxBidPrice.Text('f', b.pair.PriceScale)]
+	if !ok {
+		return nil
+	}
+
+	return val
+}
+
 func (b *Book) DeleteBid(price string) {
 	b.mx.Lock()
 	defer b.mx.Unlock()
@@ -104,6 +147,18 @@ func (b *Book) GetAsk(price string) *BookOrder {
 	defer b.mx.RUnlock()
 
 	val, ok := b.asks[price]
+	if !ok {
+		return nil
+	}
+
+	return val
+}
+
+func (b *Book) GetMinAsk() *BookOrder {
+	b.mx.RLock()
+	defer b.mx.RUnlock()
+
+	val, ok := b.asks[b.minAskPrice.Text('f', b.pair.PriceScale)]
 	if !ok {
 		return nil
 	}

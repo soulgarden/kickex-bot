@@ -45,3 +45,19 @@ func (s *Conversion) GetUSDTPrice(currency string) (*big.Float, error) {
 
 	return quotedToUSDTPrice, nil
 }
+
+func (s *Conversion) GetAskUSDTPrice(currency string) *big.Float {
+	if currency == dictionary.USDT {
+		return big.NewFloat(1)
+	}
+
+	return s.storage.OrderBooks[currency][dictionary.USDT].GetMinAskPrice()
+}
+
+func (s *Conversion) GetBidUSDTPrice(currency string) *big.Float {
+	if currency == dictionary.USDT {
+		return big.NewFloat(1)
+	}
+
+	return s.storage.OrderBooks[currency][dictionary.USDT].GetMaxBidPrice()
+}

@@ -14,8 +14,8 @@ type Bot struct {
 	DefaultAddr string `json:"default_addr" default:"demo.gate.kickex.com"`
 	Scheme      string `json:"scheme"       default:"wss"`
 
-	Pairs         []string `json:"pairs"          required:"true"`
-	TrackingPairs []string `json:"tracking_pairs" required:"true"`
+	Pairs          []string `json:"pairs"          required:"true"`
+	ArbitragePairs []string `json:"arbitrage_pairs" required:"true"`
 
 	SpreadForStartBuy      string `json:"spread_for_start_buy"       required:"true"`
 	SpreadForStartSell     string `json:"spread_for_start_sell"      required:"true"`

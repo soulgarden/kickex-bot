@@ -6,9 +6,8 @@
   "pairs": [
     "KICK/USDT"
   ],
-  "tracking_pairs": [
+  "arbitrage_pairs": [
     "KICK/BTC",
-    "KICK/USDT",
     "KICK/ETH"
   ],
   "spread_for_start_buy": "3",

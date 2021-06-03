@@ -121,7 +121,9 @@ func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan os.Signal
 		case <-ctx.Done():
 			return nil
 		case <-time.After(time.Minute):
-			s.logger.Error().Msg("update order state timeout")
+			s.logger.Err(dictionary.ErrUpdateOrderStateTimeout).Msg("update order state timeout")
+
+			return dictionary.ErrUpdateOrderStateTimeout
 		}
 	}
 }
@@ -179,9 +181,9 @@ func (s *Order) UpdateOrderState(ctx context.Context, interrupt chan os.Signal, 
 		case <-ctx.Done():
 			return nil, nil
 		case <-time.After(time.Minute):
-			s.logger.Error().Msg("update order state timeout")
+			s.logger.Err(dictionary.ErrUpdateOrderStateTimeout).Msg("update order state timeout")
 
-			return nil, nil
+			return nil, dictionary.ErrUpdateOrderStateTimeout
 		}
 	}
 }

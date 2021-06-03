@@ -24,7 +24,7 @@ import (
 )
 
 const pingInterval = 15 * time.Second
-const readChSize = 256
+const readChSize = 1024
 const writeChSize = 1024
 const readDeadline = 20 * time.Second
 const eventSize = 32768
