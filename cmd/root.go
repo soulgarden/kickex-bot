@@ -13,6 +13,7 @@ var rootCmd = &cobra.Command{}
 
 func Execute() {
 	rootCmd.AddCommand(spreadCmd)
+	rootCmd.AddCommand(buyCmd)
 	rootCmd.AddCommand(arbitrageCmd)
 
 	if err := rootCmd.Execute(); err != nil {

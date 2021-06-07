@@ -1,18 +1,18 @@
 version: '3'
 
 services:
-  disbalance:
-    image: soulgarden/kickex-bot:1.0.49
-    environment:
-      CFG_PATH: /conf.local.json
-    stop_signal: SIGINT
-    volumes:
-      - ./conf/conf.remote.json:/conf.local.json
-      - ./storage:/storage
-    command: [ "/bin/bot", "arbitrage" ]
+  #  arbitrage:
+  #    image: soulgarden/kickex-bot:1.0.51
+  #    environment:
+  #      CFG_PATH: /conf.local.json
+  #    stop_signal: SIGINT
+  #    volumes:
+  #      - ./conf/conf.remote.json:/conf.local.json
+  #      - ./storage:/storage
+  #    command: [ "/bin/bot", "arbitrage" ]
 
   spread:
-    image: soulgarden/kickex-bot:1.0.48
+    image: soulgarden/kickex-bot:1.0.51
     environment:
       CFG_PATH: /conf.local.json
     stop_signal: SIGINT
@@ -20,21 +20,12 @@ services:
       - ./conf/conf.remote.json:/conf.local.json
       - ./storage:/storage
 
-  spread_kishu:
-    image: soulgarden/kickex-bot:1.0.48
-    environment:
-      CFG_PATH: /conf.local.json
-    stop_signal: SIGINT
-    volumes:
-      - ./conf/kishu.conf.remote.json:/conf.local.json
-      - ./storage:/storage
-
-  spread_shib:
-    image: soulgarden/kickex-bot:1.0.48
-    environment:
-      CFG_PATH: /conf.local.json
-    stop_signal: SIGINT
-    volumes:
-      - ./conf/shib.conf.remote.json:/conf.local.json
-      - ./storage:/storage
-
+#  buy:
+#    image: soulgarden/kickex-bot:1.0.51
+#    environment:
+#      CFG_PATH: /conf.local.json
+#    stop_signal: SIGINT
+#    volumes:
+#      - ./conf/conf.remote.json:/conf.local.json
+#      - ./storage:/storage
+#    command: [ "/bin/bot", "buy" ]

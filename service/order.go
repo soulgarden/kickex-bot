@@ -21,29 +21,29 @@ import (
 )
 
 type Order struct {
-	cfg         *conf.Bot
-	storage     *storage.Storage
-	eventBroker *broker.Broker
-	wsSvc       *WS
-	logger      *zerolog.Logger
+	cfg           *conf.Bot
+	storage       *storage.Storage
+	wsEventBroker *broker.Broker
+	wsSvc         *WS
+	logger        *zerolog.Logger
 }
 
 func NewOrder(
 	cfg *conf.Bot,
 	storage *storage.Storage,
-	eventBroker *broker.Broker,
+	wsEventBroker *broker.Broker,
 	wsSvc *WS,
 	logger *zerolog.Logger,
 ) *Order {
-	return &Order{cfg: cfg, storage: storage, eventBroker: eventBroker, wsSvc: wsSvc, logger: logger}
+	return &Order{cfg: cfg, storage: storage, wsEventBroker: wsEventBroker, wsSvc: wsSvc, logger: logger}
 }
 
 func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan os.Signal) error {
 	s.logger.Warn().Msg("order states updater starting...")
-	defer s.logger.Warn().Msg("order states updater  stopped")
+	defer s.logger.Warn().Msg("order states updater stopped")
 
-	eventsCh := s.eventBroker.Subscribe()
-	defer s.eventBroker.Unsubscribe(eventsCh)
+	eventsCh := s.wsEventBroker.Subscribe()
+	defer s.wsEventBroker.Unsubscribe(eventsCh)
 
 	oNumberProcessed := 0
 
@@ -129,8 +129,8 @@ func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan os.Signal
 }
 
 func (s *Order) UpdateOrderState(ctx context.Context, interrupt chan os.Signal, rid int64) (*storage.Order, error) {
-	eventsCh := s.eventBroker.Subscribe()
-	defer s.eventBroker.Unsubscribe(eventsCh)
+	eventsCh := s.wsEventBroker.Subscribe()
+	defer s.wsEventBroker.Unsubscribe(eventsCh)
 
 	for {
 		select {
@@ -309,4 +309,79 @@ func (s *Order) processOrderMsg(msg []byte) (*storage.Order, error) {
 	s.logger.Warn().Int64("oid", r.Order.ID).Msg("order state updated")
 
 	return o, nil
+}
+
+func (s *Order) CancelOrder(orderID int64) error {
+	eventsCh := s.wsEventBroker.Subscribe()
+	defer s.wsEventBroker.Unsubscribe(eventsCh)
+
+	id, err := s.wsSvc.CancelOrder(orderID)
+	if err != nil {
+		s.logger.Fatal().Int64("oid", orderID).Msg("cancel order")
+	}
+
+	// TODO: add timeout
+	for e := range eventsCh {
+		msg, ok := e.([]byte)
+		if !ok {
+			return dictionary.ErrCantConvertInterfaceToBytes
+		}
+
+		rid := &response.ID{}
+		err := json.Unmarshal(msg, rid)
+
+		if err != nil {
+			s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
+
+			return err
+		}
+
+		if strconv.FormatInt(id, 10) != rid.ID {
+			continue
+		}
+
+		s.logger.Info().
+			Int64("oid", orderID).
+			Bytes("payload", msg).
+			Msg("cancel order response received")
+
+		er := &response.Error{}
+
+		err = json.Unmarshal(msg, er)
+		if err != nil {
+			s.logger.Fatal().Err(err).Msg("unmarshall")
+		}
+
+		if er.Error != nil {
+			if er.Error.Reason != response.CancelledOrder {
+				if er.Error.Code == response.DoneOrderCode {
+					s.logger.Err(err).Bytes("response", msg).Msg("can't cancel order")
+
+					return dictionary.ErrCantCancelDoneOrder
+				}
+
+				err = fmt.Errorf("%w: %s", dictionary.ErrResponse, er.Error.Reason)
+				s.logger.Err(err).Bytes("response", msg).Msg("can't cancel order")
+
+				return err
+			}
+		}
+
+		return nil
+	}
+
+	return nil
+}
+
+func (s *Order) SendCancelOrderRequest(orderID int64) {
+	_, err := s.wsSvc.CancelOrder(orderID)
+	if err != nil {
+		s.logger.Fatal().
+			Int64("oid", orderID).
+			Msg("send cancel order request")
+	}
+
+	s.logger.Warn().
+		Int64("oid", orderID).
+		Msg("send cancel order request")
 }

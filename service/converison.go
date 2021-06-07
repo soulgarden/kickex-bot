@@ -51,7 +51,7 @@ func (s *Conversion) GetAskUSDTPrice(currency string) *big.Float {
 		return big.NewFloat(1)
 	}
 
-	return s.storage.OrderBooks[currency][dictionary.USDT].GetMinAskPrice()
+	return s.storage.GetOrderBook(currency, dictionary.USDT).GetMinAskPrice()
 }
 
 func (s *Conversion) GetBidUSDTPrice(currency string) *big.Float {
@@ -59,5 +59,5 @@ func (s *Conversion) GetBidUSDTPrice(currency string) *big.Float {
 		return big.NewFloat(1)
 	}
 
-	return s.storage.OrderBooks[currency][dictionary.USDT].GetMaxBidPrice()
+	return s.storage.GetOrderBook(currency, dictionary.USDT).GetMaxBidPrice()
 }

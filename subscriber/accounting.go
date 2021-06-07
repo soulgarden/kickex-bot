@@ -25,29 +25,32 @@ import (
 )
 
 type Accounting struct {
-	cfg           *conf.Bot
-	storage       *storage.Storage
-	wsEventBroker *broker.Broker
-	wsSvc         *service.WS
-	balanceSvc    *service.Balance
-	logger        *zerolog.Logger
+	cfg            *conf.Bot
+	storage        *storage.Storage
+	wsEventBroker  *broker.Broker
+	accEventBroker *broker.Broker
+	wsSvc          *service.WS
+	balanceSvc     *service.Balance
+	logger         *zerolog.Logger
 }
 
 func NewAccounting(
 	cfg *conf.Bot,
 	storage *storage.Storage,
 	eventBroker *broker.Broker,
+	accEventBroker *broker.Broker,
 	wsSvc *service.WS,
 	balanceSvc *service.Balance,
 	logger *zerolog.Logger,
 ) *Accounting {
 	return &Accounting{
-		cfg:           cfg,
-		storage:       storage,
-		wsEventBroker: eventBroker,
-		wsSvc:         wsSvc,
-		balanceSvc:    balanceSvc,
-		logger:        logger,
+		cfg:            cfg,
+		storage:        storage,
+		wsEventBroker:  eventBroker,
+		wsSvc:          wsSvc,
+		balanceSvc:     balanceSvc,
+		accEventBroker: accEventBroker,
+		logger:         logger,
 	}
 }
 
@@ -171,14 +174,16 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal, wg *sy
 					return
 				}
 
-				o.LimitPrice, ok = big.NewFloat(0).SetString(order.LimitPrice)
-				if !ok {
-					s.logger.Err(dictionary.ErrParseFloat).
-						Str("val", order.LimitPrice).
-						Msg("parse string as float")
-					interrupt <- syscall.SIGSTOP
+				if order.LimitPrice != "" {
+					o.LimitPrice, ok = big.NewFloat(0).SetString(order.LimitPrice)
+					if !ok {
+						s.logger.Err(dictionary.ErrParseFloat).
+							Str("val", order.LimitPrice).
+							Msg("parse string as float")
+						interrupt <- syscall.SIGSTOP
 
-					return
+						return
+					}
 				}
 
 				o.TotalSellVolume = big.NewFloat(0)
@@ -213,10 +218,8 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal, wg *sy
 
 				pair := strings.Split(o.Pair, "/")
 
-				if v, ok := s.storage.OrderBooks[pair[0]]; ok {
-					if _, ok := v[pair[1]]; ok {
-						v[pair[1]].EventBroker.Publish(0)
-					}
+				if v := s.storage.GetOrderBook(pair[0], pair[1]); v != nil {
+					v.EventBroker.Publish(0)
 				}
 			}
 
@@ -230,7 +233,8 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal, wg *sy
 				return
 			}
 
-			s.storage.Deals = append(s.storage.Deals, r.Deals...)
+			s.storage.AppendDeals(r.Deals...)
+			s.accEventBroker.Publish(true)
 		case <-ctx.Done():
 			interrupt <- syscall.SIGSTOP
 

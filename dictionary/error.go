@@ -19,3 +19,7 @@ var ErrCantConvertInterfaceToBytes = errors.New("can't convert interface to byte
 var ErrInsufficientFunds = errors.New("insufficient funds")
 
 var ErrUpdateOrderStateTimeout = errors.New("update order state timeout")
+
+var ErrEventChannelClosed = errors.New("event channel closed")
+
+var ErrOrderCreationEventNotReceived = errors.New("order creation event not received")

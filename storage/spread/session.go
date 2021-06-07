@@ -1,4 +1,4 @@
-package storage
+package spread
 
 import (
 	"math/big"
@@ -29,8 +29,7 @@ type Session struct {
 	CompletedBuyOrders  goAtomic.Int64 `json:"completed_buy_orders"`
 	CompletedSellOrders goAtomic.Int64 `json:"completed_sell_orders"`
 
-	BuyTotal *big.Float `json:"buy_total"`
-
+	BuyTotal   *big.Float `json:"buy_total"`
 	SellVolume *big.Float `json:"sell_total"`
 
 	BuyOrders  map[int64]int64 `json:"buy_orders"`
@@ -39,6 +38,20 @@ type Session struct {
 	IsNeedToCreateBuyOrder  bool `json:"is_need_to_create_buy_order"`
 	IsNeedToCreateSellOrder bool `json:"is_need_to_create_sell_order"`
 	IsDone                  bool `json:"is_done"`
+}
+
+func (s *Session) GetBuyOrders() map[int64]int64 {
+	s.mx.RLock()
+	defer s.mx.RUnlock()
+
+	return s.BuyOrders
+}
+
+func (s *Session) GetSellOrders() map[int64]int64 {
+	s.mx.RLock()
+	defer s.mx.RUnlock()
+
+	return s.SellOrders
 }
 
 func NewSession(buyVolume *big.Float) *Session {
@@ -245,4 +258,50 @@ func (s *Session) SetIsDone(isDone bool) {
 	defer s.mx.Unlock()
 
 	s.IsDone = isDone
+}
+
+func (s *Session) SetBuyOrderExecutedFlags(oid int64, sellVolume *big.Float) {
+	s.mx.Lock()
+	defer s.mx.Unlock()
+
+	s.CompletedBuyOrders.Add(1)
+
+	atomic.StoreInt64(&s.PrevBuyOrderID, 0)
+	atomic.StoreInt64(&s.ActiveBuyOrderID, oid)
+
+	s.ActiveBuyExtOrderID = ""
+	s.activeBuyOrderRequestID = ""
+
+	atomic.StoreInt64(&s.ActiveSellOrderID, 0)
+
+	s.ActiveSellExtOrderID = ""
+	s.activeSellOrderRequestID = ""
+	s.IsNeedToCreateSellOrder = true
+	s.SellVolume = sellVolume
+}
+
+func (s *Session) SetSellOrderExecutedFlags() {
+	s.mx.Lock()
+	defer s.mx.Unlock()
+
+	s.CompletedSellOrders.Add(1)
+
+	atomic.StoreInt64(&s.PrevSellOrderID, 0)
+	atomic.StoreInt64(&s.ActiveSellOrderID, 0)
+
+	s.IsDone = true
+}
+
+func (s *Session) AddBuyOrder(oid int64) {
+	s.mx.Lock()
+	defer s.mx.Unlock()
+
+	s.BuyOrders[oid] = oid
+}
+
+func (s *Session) AddSellOrder(oid int64) {
+	s.mx.Lock()
+	defer s.mx.Unlock()
+
+	s.SellOrders[oid] = oid
 }

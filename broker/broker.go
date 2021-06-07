@@ -24,6 +24,10 @@ func (b *Broker) Start() {
 		case msgCh := <-b.subCh:
 			b.subscribers[msgCh] = struct{}{}
 		case msgCh := <-b.unsubCh:
+			if _, ok := b.subscribers[msgCh]; !ok {
+				continue
+			}
+
 			delete(b.subscribers, msgCh)
 			close(msgCh)
 		case msg := <-b.publishCh:

@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	spreadSessSvc "github.com/soulgarden/kickex-bot/service/spread"
+
 	"github.com/soulgarden/kickex-bot/strategy"
 
 	"github.com/soulgarden/kickex-bot/broker"
@@ -39,9 +41,12 @@ var arbitrageCmd = &cobra.Command{
 
 		logger := zerolog.New(os.Stdout).Level(defaultLogLevel).With().Caller().Logger()
 		wsEventBroker := broker.New()
+		accEventBroker := broker.New()
 		st := storage.NewStorage()
 		wsSvc := service.NewWS(cfg, wsEventBroker, &logger)
 		balanceSvc := service.NewBalance(st, wsEventBroker, wsSvc, &logger)
+		orderSvc := service.NewOrder(cfg, st, wsEventBroker, wsSvc, &logger)
+		sessSvc := spreadSessSvc.New(st)
 
 		interrupt := make(chan os.Signal, interruptChSize)
 		signal.Notify(interrupt, os.Interrupt)
@@ -59,8 +64,9 @@ var arbitrageCmd = &cobra.Command{
 
 		go wsSvc.Start(ctx, interrupt)
 		go wsEventBroker.Start()
+		go accEventBroker.Start()
 
-		accountingSub := subscriber.NewAccounting(cfg, st, wsEventBroker, wsSvc, balanceSvc, &logger)
+		accountingSub := subscriber.NewAccounting(cfg, st, wsEventBroker, accEventBroker, wsSvc, balanceSvc, &logger)
 		pairsSub := subscriber.NewPairs(cfg, st, wsEventBroker, wsSvc, &logger)
 
 		var wg sync.WaitGroup
@@ -87,7 +93,18 @@ var arbitrageCmd = &cobra.Command{
 		wg.Add(1)
 		go accountingSub.Start(ctx, interrupt, &wg)
 
-		arb := strategy.New(cfg, st, wsEventBroker, service.NewConversion(st, &logger), tgSvc, &logger)
+		arb := strategy.NewArbitrage(
+			cfg,
+			st,
+			service.NewConversion(st, &logger),
+			tgSvc,
+			wsSvc,
+			wsEventBroker,
+			accEventBroker,
+			orderSvc,
+			sessSvc,
+			&logger,
+		)
 
 		pairs := arb.GetPairsList()
 

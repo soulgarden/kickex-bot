@@ -1,67 +1,85 @@
 package storage
 
 import (
-	"encoding/json"
-	"io/ioutil"
-	"math/big"
 	"sync"
 
 	"github.com/soulgarden/kickex-bot/broker"
-
-	"github.com/soulgarden/kickex-bot/dictionary"
 
 	"github.com/soulgarden/kickex-bot/response"
 )
 
 type Storage struct {
-	pairMx sync.RWMutex
-	pairs  map[string]*Pair
+	mx         sync.RWMutex
+	pairs      map[string]*Pair
+	userOrders map[int64]*Order
 
-	ordersMx   sync.RWMutex
-	UserOrders map[int64]*Order `json:"user_orders"`
+	balances map[string]*Balance
 
-	balanceMx sync.RWMutex
-	balances  map[string]*Balance
+	deals []*response.Deal
 
-	Deals []*response.Deal `json:"deals"`
-
-	OrderBooks map[string]map[string]*Book `json:"order_books"` // base/quoted
+	orderBooks map[string]map[string]*Book // base/quoted
 }
 
 func NewStorage() *Storage {
 	return &Storage{
-		pairMx:     sync.RWMutex{},
+		mx:         sync.RWMutex{},
 		pairs:      make(map[string]*Pair),
-		ordersMx:   sync.RWMutex{},
-		UserOrders: map[int64]*Order{},
-		balanceMx:  sync.RWMutex{},
+		userOrders: map[int64]*Order{},
 		balances:   map[string]*Balance{},
-		Deals:      []*response.Deal{},
-		OrderBooks: make(map[string]map[string]*Book),
+		deals:      []*response.Deal{},
+		orderBooks: make(map[string]map[string]*Book),
 	}
 }
 
 func (s *Storage) RegisterOrderBook(pair *Pair, eventBroker *broker.Broker) *Book {
-	s.ordersMx.Lock()
-	defer s.ordersMx.Unlock()
+	s.mx.Lock()
+	defer s.mx.Unlock()
 
-	if _, ok := s.OrderBooks[pair.BaseCurrency]; !ok {
-		s.OrderBooks[pair.BaseCurrency] = make(map[string]*Book)
+	if _, ok := s.orderBooks[pair.BaseCurrency]; !ok {
+		s.orderBooks[pair.BaseCurrency] = make(map[string]*Book)
 	}
 
-	if _, ok := s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency]; !ok {
-		s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency] = NewBook(pair, eventBroker)
+	if _, ok := s.orderBooks[pair.BaseCurrency][pair.QuoteCurrency]; !ok {
+		s.orderBooks[pair.BaseCurrency][pair.QuoteCurrency] = NewBook(s, pair, eventBroker)
 	} else { // loaded from dump
-		book := s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency]
+		book := s.orderBooks[pair.BaseCurrency][pair.QuoteCurrency]
 		ResetDumpedBook(book, pair, eventBroker)
 	}
 
-	return s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency]
+	return s.orderBooks[pair.BaseCurrency][pair.QuoteCurrency]
+}
+
+func (s *Storage) GetOrderBook(base, quoted string) *Book {
+	s.mx.RLock()
+	defer s.mx.RUnlock()
+
+	return s.getOrderBook(base, quoted)
+}
+
+func (s *Storage) getOrderBook(base, quoted string) *Book {
+	baseOrderBooks, ok := s.orderBooks[base]
+	if !ok {
+		return nil
+	}
+
+	book, ok := baseOrderBooks[quoted]
+	if !ok {
+		return nil
+	}
+
+	return book
+}
+
+func (s *Storage) AppendDeals(deals ...*response.Deal) {
+	s.mx.Lock()
+	defer s.mx.Unlock()
+
+	s.deals = append(s.deals, deals...)
 }
 
 func (s *Storage) GetBalance(currency string) *Balance {
-	s.balanceMx.RLock()
-	defer s.balanceMx.RUnlock()
+	s.mx.RLock()
+	defer s.mx.RUnlock()
 
 	balance, ok := s.balances[currency]
 	if !ok {
@@ -72,17 +90,17 @@ func (s *Storage) GetBalance(currency string) *Balance {
 }
 
 func (s *Storage) UpsertBalance(currency string, balance *Balance) {
-	s.balanceMx.Lock()
-	defer s.balanceMx.Unlock()
+	s.mx.Lock()
+	defer s.mx.Unlock()
 
 	s.balances[currency] = balance
 }
 
 func (s *Storage) GetUserOrder(id int64) *Order {
-	s.ordersMx.RLock()
-	defer s.ordersMx.RUnlock()
+	s.mx.RLock()
+	defer s.mx.RUnlock()
 
-	order, ok := s.UserOrders[id]
+	order, ok := s.userOrders[id]
 	if !ok {
 		return nil
 	}
@@ -91,22 +109,22 @@ func (s *Storage) GetUserOrder(id int64) *Order {
 }
 
 func (s *Storage) GetUserOrders() map[int64]*Order {
-	s.ordersMx.RLock()
-	defer s.ordersMx.RUnlock()
+	s.mx.RLock()
+	defer s.mx.RUnlock()
 
-	return s.UserOrders
+	return s.userOrders
 }
 
 func (s *Storage) UpsertUserOrder(order *Order) {
-	s.ordersMx.Lock()
-	defer s.ordersMx.Unlock()
+	s.mx.Lock()
+	defer s.mx.Unlock()
 
-	s.UserOrders[order.ID] = order
+	s.userOrders[order.ID] = order
 }
 
 func (s *Storage) UpdatePairs(pairs []*Pair) {
-	s.pairMx.Lock()
-	defer s.pairMx.Unlock()
+	s.mx.Lock()
+	defer s.mx.Unlock()
 
 	for _, pair := range pairs {
 		s.pairs[pair.BaseCurrency+"/"+pair.QuoteCurrency] = pair
@@ -114,8 +132,8 @@ func (s *Storage) UpdatePairs(pairs []*Pair) {
 }
 
 func (s *Storage) GetPair(pairName string) *Pair {
-	s.pairMx.RLock()
-	defer s.pairMx.RUnlock()
+	s.mx.RLock()
+	defer s.mx.RUnlock()
 
 	pair, ok := s.pairs[pairName]
 	if !ok {
@@ -125,138 +143,27 @@ func (s *Storage) GetPair(pairName string) *Pair {
 	return pair
 }
 
-func (s *Storage) AddBuyOrder(pair *Pair, sid string, oid int64) {
-	s.ordersMx.Lock()
-	defer s.ordersMx.Unlock()
-
-	s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency].Sessions[sid].BuyOrders[oid] = oid
-}
-
-func (s *Storage) AddSellOrder(pair *Pair, sid string, oid int64) {
-	s.ordersMx.Lock()
-	defer s.ordersMx.Unlock()
-
-	s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency].Sessions[sid].SellOrders[oid] = oid
-}
-
-func (s *Storage) GetSessTotalBoughtVolume(pair *Pair, sid string) *big.Float {
-	s.ordersMx.RLock()
-	defer s.ordersMx.RUnlock()
-
-	total := big.NewFloat(0)
-
-	for _, oid := range s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency].Sessions[sid].BuyOrders {
-		if s.UserOrders[oid].TotalBuyVolume.Cmp(dictionary.ZeroBigFloat) == 0 {
-			continue
-		}
-
-		total.Add(total, s.UserOrders[oid].TotalBuyVolume)
-	}
-
-	return total
-}
-
-func (s *Storage) GetSessTotalBoughtCost(pair *Pair, sid string) *big.Float {
-	s.ordersMx.RLock()
-	defer s.ordersMx.RUnlock()
-
-	total := big.NewFloat(0)
-
-	for _, oid := range s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency].Sessions[sid].BuyOrders {
-		if s.UserOrders[oid].TotalBuyVolume.Cmp(dictionary.ZeroBigFloat) == 0 {
-			continue
-		}
-
-		total.Add(total, big.NewFloat(0).Mul(s.UserOrders[oid].TotalBuyVolume, s.UserOrders[oid].LimitPrice))
-	}
-
-	return total
-}
-
-func (s *Storage) GetSessTotalSoldVolume(pair *Pair, sid string) *big.Float {
-	s.ordersMx.RLock()
-	defer s.ordersMx.RUnlock()
-
-	total := big.NewFloat(0)
-
-	for _, oid := range s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency].Sessions[sid].SellOrders {
-		if s.UserOrders[oid].TotalSellVolume.Cmp(dictionary.ZeroBigFloat) == 0 {
-			continue
-		}
-
-		total.Add(total, s.UserOrders[oid].TotalSellVolume)
-	}
-
-	return total
-}
-
-func (s *Storage) GetSessTotalSoldCost(pair *Pair, sid string) *big.Float {
-	s.ordersMx.RLock()
-	defer s.ordersMx.RUnlock()
-
-	total := big.NewFloat(0)
-
-	for _, oid := range s.OrderBooks[pair.BaseCurrency][pair.QuoteCurrency].Sessions[sid].SellOrders {
-		if s.UserOrders[oid].TotalSellVolume.Cmp(dictionary.ZeroBigFloat) == 0 {
-			continue
-		}
-
-		total.Add(total, big.NewFloat(0).Mul(s.UserOrders[oid].TotalSellVolume, s.UserOrders[oid].LimitPrice))
-	}
-
-	return total
-}
-
-func (s *Storage) GetSessProfit(pair *Pair, sid string) *big.Float {
-	return big.NewFloat(0).Sub(s.GetSessTotalSoldCost(pair, sid), s.GetSessTotalBoughtCost(pair, sid))
-}
-
 func (s *Storage) CleanUpOldOrders() {
-	s.ordersMx.Lock()
-	defer s.ordersMx.Unlock()
+	s.mx.Lock()
+	defer s.mx.Unlock()
 
-	for _, baseCurrency := range s.OrderBooks {
+	for _, baseCurrency := range s.orderBooks {
 		for _, book := range baseCurrency {
-			for _, sess := range book.Sessions {
-				if !sess.IsDone {
+			for _, sess := range book.SpreadSessions {
+				if !sess.GetIsDone() {
 					continue
 				}
 
 				for _, id := range sess.BuyOrders {
-					delete(s.UserOrders, id)
+					delete(s.userOrders, id)
 				}
 
 				for _, id := range sess.SellOrders {
-					delete(s.UserOrders, id)
+					delete(s.userOrders, id)
 				}
 
-				delete(book.Sessions, sess.ID)
+				delete(book.SpreadSessions, sess.ID)
 			}
 		}
 	}
-}
-
-func (s *Storage) DumpSessions(path string) error {
-	marshalled, err := json.Marshal(s)
-	if err != nil {
-		return err
-	}
-
-	err = ioutil.WriteFile(path, marshalled, 0600)
-
-	return err
-}
-
-func (s *Storage) LoadSessions(path string) error {
-	data, err := ioutil.ReadFile(path)
-	if err != nil {
-		return err
-	}
-
-	err = json.Unmarshal(data, s)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }

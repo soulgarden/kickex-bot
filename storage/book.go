@@ -6,6 +6,9 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/soulgarden/kickex-bot/storage/buy"
+	"github.com/soulgarden/kickex-bot/storage/spread"
+
 	"github.com/soulgarden/kickex-bot/broker"
 	"github.com/soulgarden/kickex-bot/dictionary"
 	goAtomic "go.uber.org/atomic"
@@ -14,15 +17,22 @@ import (
 type Book struct {
 	mx sync.RWMutex
 
+	storage *Storage
+
 	maxBidPrice *big.Float
 	minAskPrice *big.Float
 	LastPrice   string
 	Spread      *big.Float
 
-	Sessions        map[string]*Session `json:"session"`
-	ActiveSessionID goAtomic.String
+	SpreadSessions map[string]*spread.Session `json:"spread_sessions"`
+	BuySessions    map[string]*buy.Session    `json:"buy_sessions"`
 
-	Profit *big.Float `json:"profit"`
+	SpreadActiveSessionID goAtomic.String
+	BuyActiveSessionID    goAtomic.String
+
+	Profit       *big.Float `json:"profit"`
+	BoughtVolume *big.Float `json:"bought_volume"`
+	BoughtCost   *big.Float `json:"bought_cost"`
 
 	bids map[string]*BookOrder
 	asks map[string]*BookOrder
@@ -31,20 +41,25 @@ type Book struct {
 	pair        *Pair
 }
 
-func NewBook(pair *Pair, eventBroker *broker.Broker) *Book {
+func NewBook(storage *Storage, pair *Pair, eventBroker *broker.Broker) *Book {
 	return &Book{
-		mx:              sync.RWMutex{},
-		maxBidPrice:     &big.Float{},
-		minAskPrice:     &big.Float{},
-		LastPrice:       "",
-		Spread:          &big.Float{},
-		Sessions:        make(map[string]*Session),
-		ActiveSessionID: goAtomic.String{},
-		Profit:          big.NewFloat(0),
-		bids:            make(map[string]*BookOrder),
-		asks:            make(map[string]*BookOrder),
-		EventBroker:     eventBroker,
-		pair:            pair,
+		mx:                    sync.RWMutex{},
+		storage:               storage,
+		maxBidPrice:           &big.Float{},
+		minAskPrice:           &big.Float{},
+		LastPrice:             "",
+		Spread:                &big.Float{},
+		SpreadSessions:        make(map[string]*spread.Session),
+		BuySessions:           make(map[string]*buy.Session),
+		SpreadActiveSessionID: goAtomic.String{},
+		BuyActiveSessionID:    goAtomic.String{},
+		Profit:                big.NewFloat(0),
+		BoughtVolume:          big.NewFloat(0),
+		BoughtCost:            big.NewFloat(0),
+		bids:                  make(map[string]*BookOrder),
+		asks:                  make(map[string]*BookOrder),
+		EventBroker:           eventBroker,
+		pair:                  pair,
 	}
 }
 
@@ -260,15 +275,56 @@ func (b *Book) AddProfit(v *big.Float) {
 	b.Profit.Add(b.Profit, v)
 }
 
-func (b *Book) NewSession(buyVolume *big.Float) *Session {
+func (b *Book) GetBoughtCost() *big.Float {
+	b.mx.RLock()
+	defer b.mx.RUnlock()
+
+	return b.BoughtCost
+}
+
+func (b *Book) AddBoughtCost(v *big.Float) {
 	b.mx.Lock()
 	defer b.mx.Unlock()
 
-	sess := NewSession(buyVolume)
+	b.BoughtCost.Add(b.BoughtCost, v)
+}
 
-	b.ActiveSessionID.Store(sess.ID)
+func (b *Book) GetBoughtVolume() *big.Float {
+	b.mx.RLock()
+	defer b.mx.RUnlock()
 
-	b.Sessions[sess.ID] = sess
+	return b.BoughtVolume
+}
+
+func (b *Book) AddBoughtVolume(v *big.Float) {
+	b.mx.Lock()
+	defer b.mx.Unlock()
+
+	b.BoughtVolume.Add(b.BoughtVolume, v)
+}
+
+func (b *Book) NewSpreadSession(buyVolume *big.Float) *spread.Session {
+	b.mx.Lock()
+	defer b.mx.Unlock()
+
+	sess := spread.NewSession(buyVolume)
+
+	b.SpreadActiveSessionID.Store(sess.ID)
+
+	b.SpreadSessions[sess.ID] = sess
+
+	return sess
+}
+
+func (b *Book) NewBuySession(buyVolume *big.Float) *buy.Session {
+	b.mx.Lock()
+	defer b.mx.Unlock()
+
+	sess := buy.NewSession(buyVolume)
+
+	b.BuyActiveSessionID.Store(sess.ID)
+
+	b.BuySessions[sess.ID] = sess
 
 	return sess
 }
