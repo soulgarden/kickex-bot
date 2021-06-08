@@ -372,6 +372,7 @@ spread %s`,
 
 			// 2. sell base for quoted
 			o := s.storage.GetUserOrder(oid)
+			buyBaseOrder := o
 
 			if o == nil {
 				s.logger.
@@ -453,18 +454,18 @@ spread %s`,
 				return dictionary.ErrOrderNotFoundOrOutdated
 			}
 
-			//			s.tgSvc.Send(
-			//				fmt.Sprintf(
-			//					`env: %s,
-			//arbitrage done,
-			//pair %s,
-			//before usdt amount %s,
-			//after usdt amount %s`,
-			//					s.cfg.Env,
-			//					baseQuotedPair.GetPairName(),
-			//					buyBaseOrder.TotalSellVolume.Text('f', baseUSDTPair.VolumeScale),
-			//					o.TotalBuyVolume.Text('f', baseUSDTPair.VolumeScale),
-			//				))
+			s.tgSvc.Send(
+				fmt.Sprintf(
+					`env: %s,
+			arbitrage done,
+			pair %s,
+			before usdt amount %s,
+			after usdt amount %s`,
+					s.cfg.Env,
+					baseQuotedPair.GetPairName(),
+					buyBaseOrder.TotalSellVolume.Text('f', baseUSDTPair.VolumeScale),
+					o.TotalBuyVolume.Text('f', baseUSDTPair.VolumeScale),
+				))
 		}
 	}
 
