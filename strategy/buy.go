@@ -26,7 +26,7 @@ import (
 	"github.com/soulgarden/kickex-bot/storage"
 )
 
-const buySessCreationInterval = 10 * time.Second
+const buySessCreationInterval = 2 * time.Minute
 
 type Buy struct {
 	cfg            *conf.Bot
@@ -119,8 +119,8 @@ func (s *Buy) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan os.S
 		wg.Done()
 	}()
 
-	s.logger.Warn().Str("pair", s.pair.GetPairName()).Msg("spread manager starting...")
-	defer s.logger.Warn().Str("pair", s.pair.GetPairName()).Msg("spread manager stopped")
+	s.logger.Warn().Str("pair", s.pair.GetPairName()).Msg("buy manager starting...")
+	defer s.logger.Warn().Str("pair", s.pair.GetPairName()).Msg("buy manager stopped")
 
 	for {
 		select {
@@ -467,7 +467,15 @@ func (s *Buy) watchOrder(ctx context.Context, interrupt chan os.Signal, sess *bu
 
 	for {
 		select {
-		case <-accEventCh:
+		case _, ok := <-accEventCh:
+			if !ok {
+				s.logger.Err(dictionary.ErrEventChannelClosed).Msg("event channel closed")
+
+				interrupt <- syscall.SIGSTOP
+
+				return
+			}
+
 			hasFinalState, err := s.checkOrderState(ctx, interrupt, orderID, sess, &startedTime)
 			if err != nil {
 				interrupt <- syscall.SIGSTOP
@@ -528,7 +536,10 @@ func (s *Buy) checkOrderState(
 	}
 
 	if order.State < dictionary.StateActive {
-		s.logger.Warn().Int64("oid", orderID).Msg("order state is below active")
+		s.logger.Warn().
+			Int64("oid", orderID).
+			Int("state", order.State).
+			Msg("order state is below active")
 
 		return false, nil
 	}
@@ -730,13 +741,15 @@ pair: %s,
 id: %d,
 price: %s,
 volume: %s,
+cost: %s,
 total bought cost: %s,
 total bought volume %s`,
 		s.cfg.Env,
 		s.pair.GetPairName(),
 		order.ID,
 		order.LimitPrice.Text('f', s.pair.PriceScale),
-		s.orderBook.GetProfit().Text('f', s.pair.PriceScale),
+		s.sessSvc.GetSessTotalBoughtVolume(sess).Text('f', s.pair.QuantityScale),
+		s.sessSvc.GetSessTotalBoughtCost(sess).Text('f', s.pair.PriceScale),
 		s.orderBook.GetBoughtCost().Text('f', s.pair.PriceScale),
 		s.orderBook.GetBoughtVolume().Text('f', s.pair.QuantityScale),
 	))

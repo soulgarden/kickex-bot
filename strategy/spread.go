@@ -771,7 +771,15 @@ func (s *Spread) watchOrder(ctx context.Context, interrupt chan os.Signal, sess 
 
 	for {
 		select {
-		case <-accEventCh:
+		case _, ok := <-accEventCh:
+			if !ok {
+				s.logger.Err(dictionary.ErrEventChannelClosed).Msg("event channel closed")
+
+				interrupt <- syscall.SIGSTOP
+
+				return
+			}
+
 			hasFinalState, err := s.checkOrderState(ctx, interrupt, orderID, sess, &startedTime)
 			if err != nil {
 				interrupt <- syscall.SIGSTOP
@@ -832,7 +840,10 @@ func (s *Spread) checkOrderState(
 	}
 
 	if order.State < dictionary.StateActive {
-		s.logger.Warn().Int64("oid", orderID).Msg("order state is below active")
+		s.logger.Warn().
+			Int64("oid", orderID).
+			Int("state", order.State).
+			Msg("order state is below active")
 
 		return false, nil
 	}

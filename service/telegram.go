@@ -8,7 +8,7 @@ import (
 	tb "gopkg.in/tucnak/telebot.v2"
 )
 
-const sendDelay = time.Millisecond * 200
+const sendDelay = time.Millisecond * 500
 const queueSize = 256
 
 type Telegram struct {

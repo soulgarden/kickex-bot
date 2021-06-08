@@ -45,12 +45,12 @@ var spreadCmd = &cobra.Command{
 		}
 
 		logger := zerolog.New(os.Stdout).Level(defaultLogLevel).With().Caller().Logger()
-		wsEventBroker := broker.New()
-		accEventBroker := broker.New()
+		wsEventBroker := broker.New(&logger)
+		accEventBroker := broker.New(&logger)
 		st := storage.NewStorage()
 		wsSvc := service.NewWS(cfg, wsEventBroker, &logger)
 		orderSvc := service.NewOrder(cfg, st, wsEventBroker, wsSvc, &logger)
-		balanceSvc := service.NewBalance(st, wsEventBroker, wsSvc, &logger)
+		balanceSvc := service.NewBalance(st, wsEventBroker, accEventBroker, wsSvc, &logger)
 		sessSvc := spreadSessSvc.New(st)
 
 		interrupt := make(chan os.Signal, interruptChSize)
@@ -99,6 +99,13 @@ var spreadCmd = &cobra.Command{
 		go wsEventBroker.Start()
 		go accEventBroker.Start()
 
+		logger.Warn().Msg("starting...")
+
+		err = balanceSvc.GetBalance(ctx, interrupt)
+		if err != nil {
+			logger.Fatal().Err(err).Msg("get balance")
+		}
+
 		_, err = os.Stat(fmt.Sprintf(cfg.StorageDumpPath, cfg.Env))
 		if err == nil {
 			logger.Warn().Msg("load sessions from dump file")
@@ -125,13 +132,6 @@ var spreadCmd = &cobra.Command{
 			logger.Fatal().Err(err).Msg("open dump file")
 		}
 
-		logger.Warn().Msg("starting...")
-
-		err = balanceSvc.GetBalance(ctx, interrupt)
-		if err != nil {
-			logger.Fatal().Err(err).Msg("get balance")
-		}
-
 		accounting := subscriber.NewAccounting(cfg, st, wsEventBroker, accEventBroker, wsSvc, balanceSvc, &logger)
 		pairs := subscriber.NewPairs(cfg, st, wsEventBroker, wsSvc, &logger)
 
@@ -140,7 +140,20 @@ var spreadCmd = &cobra.Command{
 		wg.Add(1)
 		go pairs.Start(ctx, interrupt, &wg)
 
-		time.Sleep(pairsWaitingDuration) // wait for pairs filling
+		for {
+			pairsNum := len(cfg.Spread.Pairs)
+			for _, pairName := range cfg.Spread.Pairs {
+				if st.GetPair(pairName) != nil {
+					pairsNum--
+				}
+			}
+
+			if pairsNum == 0 {
+				break
+			}
+
+			time.Sleep(pairsWaitingDuration)
+		}
 
 		wg.Add(1)
 		go accounting.Start(ctx, interrupt, &wg)
@@ -158,7 +171,7 @@ var spreadCmd = &cobra.Command{
 				break
 			}
 
-			orderBookEventBroker := broker.New()
+			orderBookEventBroker := broker.New(&logger)
 			go orderBookEventBroker.Start()
 
 			orderBook := st.RegisterOrderBook(pair, orderBookEventBroker)

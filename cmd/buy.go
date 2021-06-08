@@ -39,12 +39,12 @@ var buyCmd = &cobra.Command{
 		}
 
 		logger := zerolog.New(os.Stdout).Level(defaultLogLevel).With().Caller().Logger()
-		wsEventBroker := broker.New()
-		accEventBroker := broker.New()
+		wsEventBroker := broker.New(&logger)
+		accEventBroker := broker.New(&logger)
 		st := storage.NewStorage()
 		wsSvc := service.NewWS(cfg, wsEventBroker, &logger)
 		orderSvc := service.NewOrder(cfg, st, wsEventBroker, wsSvc, &logger)
-		balanceSvc := service.NewBalance(st, wsEventBroker, wsSvc, &logger)
+		balanceSvc := service.NewBalance(st, wsEventBroker, accEventBroker, wsSvc, &logger)
 		sessSvc := buySessSvc.New(st)
 
 		interrupt := make(chan os.Signal, interruptChSize)
@@ -65,8 +65,8 @@ var buyCmd = &cobra.Command{
 
 		go tgSvc.Start()
 
-		tgSvc.Send(fmt.Sprintf("env: %s, spread trading bot starting", cfg.Env))
-		defer tgSvc.SendSync(fmt.Sprintf("env: %s, spread trading bot shutting down", cfg.Env))
+		tgSvc.Send(fmt.Sprintf("env: %s, buy bot starting", cfg.Env))
+		defer tgSvc.SendSync(fmt.Sprintf("env: %s, buy bot shutting down", cfg.Env))
 
 		go func() {
 			<-interrupt
@@ -108,7 +108,20 @@ var buyCmd = &cobra.Command{
 		wg.Add(1)
 		go pairs.Start(ctx, interrupt, &wg)
 
-		time.Sleep(pairsWaitingDuration) // wait for pairs filling
+		for {
+			pairsNum := len(cfg.Buy.Pairs)
+			for _, pairName := range cfg.Buy.Pairs {
+				if st.GetPair(pairName) != nil {
+					pairsNum--
+				}
+			}
+
+			if pairsNum == 0 {
+				break
+			}
+
+			time.Sleep(pairsWaitingDuration)
+		}
 
 		wg.Add(1)
 		go accounting.Start(ctx, interrupt, &wg)
@@ -126,7 +139,7 @@ var buyCmd = &cobra.Command{
 				break
 			}
 
-			orderBookEventBroker := broker.New()
+			orderBookEventBroker := broker.New(&logger)
 			go orderBookEventBroker.Start()
 
 			orderBook := st.RegisterOrderBook(pair, orderBookEventBroker)

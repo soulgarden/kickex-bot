@@ -20,6 +20,8 @@ import (
 	"github.com/soulgarden/kickex-bot/storage"
 )
 
+const cancelOrderTimeout = time.Second * 10
+
 type Order struct {
 	cfg           *conf.Bot
 	storage       *storage.Storage
@@ -320,57 +322,62 @@ func (s *Order) CancelOrder(orderID int64) error {
 		s.logger.Fatal().Int64("oid", orderID).Msg("cancel order")
 	}
 
-	// TODO: add timeout
-	for e := range eventsCh {
-		msg, ok := e.([]byte)
-		if !ok {
-			return dictionary.ErrCantConvertInterfaceToBytes
-		}
+	for {
+		select {
+		case e := <-eventsCh:
+			msg, ok := e.([]byte)
+			if !ok {
+				return dictionary.ErrCantConvertInterfaceToBytes
+			}
 
-		rid := &response.ID{}
-		err := json.Unmarshal(msg, rid)
+			rid := &response.ID{}
+			err := json.Unmarshal(msg, rid)
 
-		if err != nil {
-			s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
-
-			return err
-		}
-
-		if strconv.FormatInt(id, 10) != rid.ID {
-			continue
-		}
-
-		s.logger.Info().
-			Int64("oid", orderID).
-			Bytes("payload", msg).
-			Msg("cancel order response received")
-
-		er := &response.Error{}
-
-		err = json.Unmarshal(msg, er)
-		if err != nil {
-			s.logger.Fatal().Err(err).Msg("unmarshall")
-		}
-
-		if er.Error != nil {
-			if er.Error.Reason != response.CancelledOrder {
-				if er.Error.Code == response.DoneOrderCode {
-					s.logger.Err(err).Bytes("response", msg).Msg("can't cancel order")
-
-					return dictionary.ErrCantCancelDoneOrder
-				}
-
-				err = fmt.Errorf("%w: %s", dictionary.ErrResponse, er.Error.Reason)
-				s.logger.Err(err).Bytes("response", msg).Msg("can't cancel order")
+			if err != nil {
+				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
 				return err
 			}
+
+			if strconv.FormatInt(id, 10) != rid.ID {
+				continue
+			}
+
+			s.logger.Info().
+				Int64("oid", orderID).
+				Bytes("payload", msg).
+				Msg("cancel order response received")
+
+			er := &response.Error{}
+
+			err = json.Unmarshal(msg, er)
+			if err != nil {
+				s.logger.Fatal().Err(err).Msg("unmarshall")
+			}
+
+			if er.Error != nil {
+				if er.Error.Reason != response.CancelledOrder {
+					if er.Error.Code == response.DoneOrderCode {
+						s.logger.Err(err).Bytes("response", msg).Msg("can't cancel order")
+
+						return dictionary.ErrCantCancelDoneOrder
+					}
+
+					err = fmt.Errorf("%w: %s", dictionary.ErrResponse, er.Error.Reason)
+					s.logger.Err(err).Bytes("response", msg).Msg("can't cancel order")
+
+					return err
+				}
+			}
+
+			return nil
+
+		case <-time.After(cancelOrderTimeout):
+			s.logger.Err(err).Msg(err.Error())
+
+			return dictionary.ErrCancelOrderTimeout
 		}
-
-		return nil
 	}
-
-	return nil
 }
 
 func (s *Order) SendCancelOrderRequest(orderID int64) {
