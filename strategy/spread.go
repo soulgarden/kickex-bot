@@ -219,6 +219,14 @@ func (s *Spread) processOldSession(
 	s.logger.Warn().
 		Str("id", sess.ID).
 		Str("pair", s.pair.GetPairName()).
+		Str("active sell ext oid", sess.ActiveSellExtOrderID).
+		Str("active buy ext oid", sess.ActiveBuyExtOrderID).
+		Int64("active buy oid", sess.ActiveBuyOrderID).
+		Int64("active sell oid", sess.ActiveSellOrderID).
+		Int64("prev buy oid", sess.PrevBuyOrderID).
+		Int64("prev sell oid", sess.PrevSellOrderID).
+		Bool("is need to create buy order", sess.IsNeedToCreateBuyOrder).
+		Bool("is need to create sell order", sess.IsNeedToCreateSellOrder).
 		Msg("old session started")
 
 	defer s.logger.Warn().

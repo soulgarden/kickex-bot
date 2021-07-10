@@ -348,9 +348,9 @@ spread %s`,
 			// 1. buy base for usdt
 			s.logger.Warn().
 				Str("pair", baseUSDTPair.GetPairName()).
-				Str("amount", s.prepareAmount(startBuyVolume, baseUSDTPair)).
+				Str("amount", s.prepareAmount(baseBuyOrderAmount, baseUSDTPair)).
 				Str("price", baseBuyOrder.Price.Text('f', baseUSDTPair.PriceScale)).
-				Str("total", baseBuyOrderAmount.Text('f', baseUSDTPair.QuantityScale)).
+				Str("total", startBuyVolume.Text('f', baseUSDTPair.QuantityScale)).
 				Msg("buy base")
 
 			oid, err := s.createOrder(
@@ -795,7 +795,7 @@ func (s *Arbitrage) prepareAmount(a *big.Float, pair *storage.Pair) string {
 	resultAmount := amountArr[0]
 
 	// nolint:gomnd
-	if len(amountArr) == 2 {
+	if len(amountArr) == 2 && pair.QuantityScale != 0 {
 		resultAmount = resultAmount + "." + amountArr[1][0:pair.QuantityScale]
 	}
 

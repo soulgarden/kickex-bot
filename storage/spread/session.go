@@ -19,11 +19,11 @@ type Session struct {
 	ActiveBuyExtOrderID     string `json:"active_buy_ext_order_id"`
 
 	activeSellOrderRequestID string
-	ActiveSellExtOrderID     string `json:"active_sell_order_id"`
+	ActiveSellExtOrderID     string `json:"active_sell_ext_order_id"`
 
 	PrevBuyOrderID    int64 `json:"prev_buy_order_id"`
 	ActiveBuyOrderID  int64 `json:"active_buy_order_id"`
-	ActiveSellOrderID int64 `json:"active_sell_ext_order_id"`
+	ActiveSellOrderID int64 `json:"active_sell_order_id"`
 	PrevSellOrderID   int64 `json:"prev_sell_order_id"`
 
 	CompletedBuyOrders  goAtomic.Int64 `json:"completed_buy_orders"`

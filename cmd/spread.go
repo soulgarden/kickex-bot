@@ -34,7 +34,7 @@ const (
 //nolint: gochecknoglobals
 var spreadCmd = &cobra.Command{
 	Use:   "spread",
-	Short: "Start spread trade bot for kickex exchang",
+	Short: "Start spread trade bot for kickex exchange",
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := conf.New()
