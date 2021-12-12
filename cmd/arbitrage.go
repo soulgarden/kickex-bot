@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	spreadSessSvc "github.com/soulgarden/kickex-bot/service/spread"
@@ -50,6 +51,7 @@ var arbitrageCmd = &cobra.Command{
 
 		interrupt := make(chan os.Signal, interruptChSize)
 		signal.Notify(interrupt, os.Interrupt)
+		signal.Notify(interrupt, syscall.SIGTERM)
 
 		ctx, cancel := context.WithCancel(context.Background())
 

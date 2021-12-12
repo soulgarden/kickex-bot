@@ -8,7 +8,7 @@ volumes:
 
 services:
   arbitrage:
-    image: soulgarden/kickex-bot:1.0.53
+    image: soulgarden/kickex-bot:1.0.54
     environment:
       CFG_PATH: /conf.local.json
     stop_signal: SIGINT
@@ -28,7 +28,7 @@ services:
         tag: "docker.kickex-bot.arbitrage.prod"
 
   spread:
-    image: soulgarden/kickex-bot:1.0.53
+    image: soulgarden/kickex-bot:1.0.54
     environment:
       CFG_PATH: /conf.local.json
     stop_signal: SIGINT
@@ -44,7 +44,7 @@ services:
         tag: "docker.kickex-bot.spread.prod"
 
   spread_small:
-    image: soulgarden/kickex-bot:1.0.53
+    image: soulgarden/kickex-bot:1.0.54
     environment:
       CFG_PATH: /conf.local.json
     stop_signal: SIGINT
@@ -59,22 +59,22 @@ services:
         fluentd-async-connect: "true"
         tag: "docker.kickex-bot.spread-small.prod"
 
-#  buy:
-#    image: soulgarden/kickex-bot:1.0.53
-#    environment:
-#      CFG_PATH: /conf.local.json
-#    stop_signal: SIGINT
-#    volumes:
-#      - ./conf/conf.remote.json:/conf.local.json
-#      - ./storage:/storage
-#    command: [ "/bin/bot", "buy" ]
-#    networks:
-#     - logging
-#    logging:
-#      driver: "fluentd"
-#      options:
-#        fluentd-async-connect: "true"
-#        tag: "docker.kickex-bot.buy.prod"
+  buy:
+    image: soulgarden/kickex-bot:1.0.54
+    environment:
+      CFG_PATH: /conf.local.json
+    stop_signal: SIGINT
+    volumes:
+      - ./conf/conf.remote.json:/conf.local.json
+      - ./storage:/storage
+    command: [ "/bin/bot", "buy" ]
+    networks:
+     - logging
+    logging:
+      driver: "fluentd"
+      options:
+        fluentd-async-connect: "true"
+        tag: "docker.kickex-bot.buy.prod"
 
   elasticsearch:
     image: elasticsearch:7.13.3

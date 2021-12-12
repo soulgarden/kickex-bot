@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	buySessSvc "github.com/soulgarden/kickex-bot/service/buy"
@@ -49,6 +50,7 @@ var buyCmd = &cobra.Command{
 
 		interrupt := make(chan os.Signal, interruptChSize)
 		signal.Notify(interrupt, os.Interrupt)
+		signal.Notify(interrupt, syscall.SIGTERM)
 
 		ctx, cancel := context.WithCancel(context.Background())
 
