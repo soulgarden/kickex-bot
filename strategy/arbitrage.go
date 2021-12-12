@@ -794,7 +794,6 @@ func (s *Arbitrage) prepareAmount(a *big.Float, pair *storage.Pair) string {
 
 	resultAmount := amountArr[0]
 
-	// nolint:gomnd
 	if len(amountArr) == 2 && pair.QuantityScale != 0 {
 		resultAmount = resultAmount + "." + amountArr[1][0:pair.QuantityScale]
 	}

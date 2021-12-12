@@ -9,4 +9,5 @@ issues:
         - gofumpt
         - exhaustivestruct
         - wrapcheck
+        - tagliatelle
   enable-all: true
