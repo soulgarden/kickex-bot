@@ -21,7 +21,3 @@ type Pair struct {
 	MinVolume       string `json:"minVolume"`
 	State           int    `json:"state"`
 }
-
-func (p *Pair) GetPairName() string {
-	return p.BaseCurrency + "/" + p.QuoteCurrency
-}

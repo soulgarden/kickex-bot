@@ -6,9 +6,10 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
-	spreadSessSvc "github.com/soulgarden/kickex-bot/service/spread"
+	buySessSvc "github.com/soulgarden/kickex-bot/service/buy"
 
 	"github.com/soulgarden/kickex-bot/strategy"
 
@@ -25,16 +26,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const (
-	ShutDownDuration = time.Second * 15
-	cleanupInterval  = time.Minute * 10
-	interruptChSize  = 100
-)
-
 //nolint: gochecknoglobals
-var spreadCmd = &cobra.Command{
-	Use:   "spread",
-	Short: "Start spread trade bot for kickex exchange",
+var buyCmd = &cobra.Command{
+	Use:   "buy",
+	Short: "Start buy bot for kickex exchange",
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := conf.New()
@@ -51,10 +46,11 @@ var spreadCmd = &cobra.Command{
 		wsSvc := service.NewWS(cfg, wsEventBroker, &logger)
 		orderSvc := service.NewOrder(cfg, st, wsEventBroker, wsSvc, &logger)
 		balanceSvc := service.NewBalance(st, wsEventBroker, accEventBroker, wsSvc, &logger)
-		sessSvc := spreadSessSvc.New(st)
+		sessSvc := buySessSvc.New(st)
 
 		interrupt := make(chan os.Signal, interruptChSize)
 		signal.Notify(interrupt, os.Interrupt)
+		signal.Notify(interrupt, syscall.SIGTERM)
 
 		ctx, cancel := context.WithCancel(context.Background())
 
@@ -71,8 +67,8 @@ var spreadCmd = &cobra.Command{
 
 		go tgSvc.Start()
 
-		tgSvc.Send(fmt.Sprintf("env: %s, spread trading bot starting", cfg.Env))
-		defer tgSvc.SendSync(fmt.Sprintf("env: %s, spread trading bot shutting down", cfg.Env))
+		tgSvc.Send(fmt.Sprintf("env: %s, buy bot starting", cfg.Env))
+		defer tgSvc.SendSync(fmt.Sprintf("env: %s, buy bot shutting down", cfg.Env))
 
 		go func() {
 			<-interrupt
@@ -106,32 +102,6 @@ var spreadCmd = &cobra.Command{
 			logger.Fatal().Err(err).Msg("get balance")
 		}
 
-		_, err = os.Stat(fmt.Sprintf(cfg.StorageDumpPath, cfg.Env))
-		if err == nil {
-			logger.Warn().Msg("load sessions from dump file")
-
-			d := storage.NewDumpStorage(st)
-
-			err = d.Recover(fmt.Sprintf(cfg.StorageDumpPath, cfg.Env))
-			if err != nil {
-				logger.Fatal().Err(err).Msg("load sessions from dump")
-			}
-
-			e := os.Remove(fmt.Sprintf(cfg.StorageDumpPath, cfg.Env))
-			if e != nil {
-				logger.Fatal().Err(err).Msg("remove dump file")
-			}
-
-			if len(st.GetUserOrders()) > 0 {
-				err = orderSvc.UpdateOrdersStates(ctx, interrupt)
-				if err != nil {
-					logger.Fatal().Err(err).Msg("update orders for dumped state")
-				}
-			}
-		} else if !os.IsNotExist(err) {
-			logger.Fatal().Err(err).Msg("open dump file")
-		}
-
 		accounting := subscriber.NewAccounting(cfg, st, wsEventBroker, accEventBroker, wsSvc, balanceSvc, &logger)
 		pairs := subscriber.NewPairs(cfg, st, wsEventBroker, wsSvc, &logger)
 
@@ -141,8 +111,8 @@ var spreadCmd = &cobra.Command{
 		go pairs.Start(ctx, interrupt, &wg)
 
 		for {
-			pairsNum := len(cfg.Spread.Pairs)
-			for _, pairName := range cfg.Spread.Pairs {
+			pairsNum := len(cfg.Buy.Pairs)
+			for _, pairName := range cfg.Buy.Pairs {
 				if st.GetPair(pairName) != nil {
 					pairsNum--
 				}
@@ -158,7 +128,7 @@ var spreadCmd = &cobra.Command{
 		wg.Add(1)
 		go accounting.Start(ctx, interrupt, &wg)
 
-		for _, pairName := range cfg.Spread.Pairs {
+		for _, pairName := range cfg.Buy.Pairs {
 			pair := st.GetPair(pairName)
 			if pair == nil {
 				logger.
@@ -179,7 +149,7 @@ var spreadCmd = &cobra.Command{
 			wg.Add(1)
 			go subscriber.NewOrderBook(cfg, st, wsEventBroker, wsSvc, pair, orderBook, &logger).Start(ctx, &wg, interrupt)
 
-			spreadTrader, err := strategy.NewSpread(
+			buyStrategy, err := strategy.NewBuy(
 				cfg,
 				st,
 				wsEventBroker,
@@ -200,7 +170,7 @@ var spreadCmd = &cobra.Command{
 			}
 
 			wg.Add(1)
-			go spreadTrader.Start(ctx, &wg, interrupt)
+			go buyStrategy.Start(ctx, &wg, interrupt)
 		}
 
 		go func() {
@@ -219,10 +189,6 @@ var spreadCmd = &cobra.Command{
 		wg.Wait()
 
 		wsSvc.Close()
-
-		d := storage.NewDumpStorage(st)
-		err = d.DumpStorage(fmt.Sprintf(cfg.StorageDumpPath, cfg.Env))
-		logger.Err(err).Msg("dump sessions to file")
 
 		logger.Warn().Msg("shutting down...")
 	},

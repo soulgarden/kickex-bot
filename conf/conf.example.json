@@ -3,25 +3,36 @@
   "api_key_pass": "",
   "default_addr": "demo.gate.kickex.com",
   "scheme": "wss",
-  "pairs": [
-    "KICK/USDT"
-  ],
-  "tracking_pairs": [
-    "KICK/BTC",
-    "KICK/USDT",
-    "KICK/ETH",
-    "KICK/TRX"
-  ],
-  "spread_for_start_buy": "3",
-  "spread_for_start_sell": "0.8",
-  "spread_for_stop_buy_trade": "1.7",
-  "spread_for_stop_sell_trade": "0.4",
-  "total_buy_in_usdt": "20",
+  "spread": {
+    "pairs": [
+      "KICK/USDT"
+    ],
+    "spread_for_start_buy": "3",
+    "spread_for_start_sell": "0.8",
+    "spread_for_stop_buy_trade": "1.7",
+    "spread_for_stop_sell_trade": "0.4",
+    "total_buy_in_usdt": "10"
+  },
+  "buy": {
+    "pairs": [
+      "KICK/USDT"
+    ],
+    "spread_for_start_buy": "3",
+    "spread_for_stop_buy_trade": "1.7",
+    "total_buy_in_usdt": "10"
+  },
+  "arbitrage": {
+    "pairs": [
+      "KICK/BTC",
+      "KICK/ETH"
+    ],
+    "total_buy_in_usdt": "10"
+  },
   "telegram": {
     "token": "",
     "chat_id": 0
   },
-  "env": "demo",
+  "env": "local",
   "storage_dump_path": "./storage/%s.spread.state.json",
   "debug": false
 }

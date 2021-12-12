@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	uuid "github.com/satori/go.uuid"
+
 	"github.com/soulgarden/kickex-bot/response"
 
 	"github.com/rs/zerolog"
@@ -22,7 +24,7 @@ import (
 )
 
 const pingInterval = 15 * time.Second
-const readChSize = 256
+const readChSize = 1024
 const writeChSize = 1024
 const readDeadline = 20 * time.Second
 const eventSize = 32768
@@ -215,7 +217,7 @@ func (c *Client) GetPairsAndSubscribe() (int64, error) {
 	return id, c.sendMessage(body)
 }
 
-func (c *Client) CreateOrder(pair, volume, limitPrice string, tradeIntent int) (int64, error) {
+func (c *Client) CreateOrder(pair, volume, limitPrice string, tradeIntent int) (int64, string, error) {
 	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.CreateOrder{
@@ -227,13 +229,13 @@ func (c *Client) CreateOrder(pair, volume, limitPrice string, tradeIntent int) (
 			LimitPrice:    limitPrice,
 			TradeIntent:   tradeIntent,
 		},
-		ExternalID: strconv.FormatInt(id, 10),
+		ExternalID: uuid.NewV4().String(),
 	}
 
-	return id, c.sendMessage(body)
+	return id, body.ExternalID, c.sendMessage(body)
 }
 
-func (c *Client) AlterOrder(pair, volume, limitPrice string, tradeIntent int, orderID int64) (int64, error) {
+func (c *Client) AlterOrder(pair, volume, limitPrice string, tradeIntent int, orderID int64) (int64, string, error) {
 	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.AlterTradeOrder{
@@ -247,11 +249,11 @@ func (c *Client) AlterOrder(pair, volume, limitPrice string, tradeIntent int, or
 				TradeIntent:   tradeIntent,
 			},
 		},
-		ExternalID: strconv.FormatInt(id, 10),
+		ExternalID: uuid.NewV4().String(),
 		OrderID:    orderID,
 	}
 
-	return id, c.sendMessage(body)
+	return id, body.ExternalID, c.sendMessage(body)
 }
 
 func (c *Client) CancelOrder(orderID int64) (int64, error) {
@@ -273,6 +275,18 @@ func (c *Client) GetOrder(orderID int64) (int64, error) {
 		ID:      strconv.FormatInt(id, 10),
 		Type:    dictionary.GetOrder,
 		OrderID: orderID,
+	}
+
+	return id, c.sendMessage(body)
+}
+
+func (c *Client) GetOrderByExtID(extID string) (int64, error) {
+	id := atomic.AddInt64(&c.id, 1)
+
+	body := &request.GetOrder{
+		ID:         strconv.FormatInt(id, 10),
+		Type:       dictionary.GetOrder,
+		ExternalID: extID,
 	}
 
 	return id, c.sendMessage(body)

@@ -10,12 +10,6 @@ type BookResponse struct {
 	} `json:"lastPrice"`
 }
 
-type Order struct {
-	Price  string
-	Amount string
-	Total  string
-}
-
 type UserOrdersResponse struct {
 	ID         string             `json:"id"`
 	OpenOrders []*AccountingOrder `json:"openOrders"`

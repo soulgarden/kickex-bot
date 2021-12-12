@@ -19,5 +19,4 @@ vendor/
 conf/conf.local.json
 conf/conf.demo.json
 
-!storage/storage.go
-storage/*
+storage/*.json

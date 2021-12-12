@@ -1,23 +1,144 @@
 version: '3'
 
+networks:
+  logging:
+
+volumes:
+  elasticsearch-data:
+
 services:
-  disbalance:
-    container_name: disbalance
-    image: soulgarden/kickex-bot:1.0.33
+  arbitrage:
+    image: soulgarden/kickex-bot:1.0.54
     environment:
       CFG_PATH: /conf.local.json
     stop_signal: SIGINT
     volumes:
       - ./conf/conf.remote.json:/conf.local.json
       - ./storage:/storage
-    command: [ "/bin/bot", "disbalance" ]
+    command: [ "/bin/bot", "arbitrage" ]
+    deploy:
+      restart_policy:
+        condition: none
+    networks:
+      - logging
+    logging:
+      driver: "fluentd"
+      options:
+        fluentd-async-connect: "true"
+        tag: "docker.kickex-bot.arbitrage.prod"
 
   spread:
-    container_name: spread
-    image: soulgarden/kickex-bot:1.0.33
+    image: soulgarden/kickex-bot:1.0.54
     environment:
       CFG_PATH: /conf.local.json
     stop_signal: SIGINT
     volumes:
       - ./conf/conf.remote.json:/conf.local.json
       - ./storage:/storage
+    networks:
+      - logging
+    logging:
+      driver: "fluentd"
+      options:
+        fluentd-async-connect: "true"
+        tag: "docker.kickex-bot.spread.prod"
+
+  spread_small:
+    image: soulgarden/kickex-bot:1.0.54
+    environment:
+      CFG_PATH: /conf.local.json
+    stop_signal: SIGINT
+    volumes:
+      - ./conf/conf.remote.small.json:/conf.local.json
+      - ./storage:/storage
+    networks:
+      - logging
+    logging:
+      driver: "fluentd"
+      options:
+        fluentd-async-connect: "true"
+        tag: "docker.kickex-bot.spread-small.prod"
+
+  buy:
+    image: soulgarden/kickex-bot:1.0.54
+    environment:
+      CFG_PATH: /conf.local.json
+    stop_signal: SIGINT
+    volumes:
+      - ./conf/conf.remote.json:/conf.local.json
+      - ./storage:/storage
+    command: [ "/bin/bot", "buy" ]
+    networks:
+     - logging
+    logging:
+      driver: "fluentd"
+      options:
+        fluentd-async-connect: "true"
+        tag: "docker.kickex-bot.buy.prod"
+
+  elasticsearch:
+    image: elasticsearch:7.13.3
+    environment:
+      cluster.name: elasticsearch
+      discovery.type: single-node
+      bootstrap.memory_lock: "true"
+      ES_JAVA_OPTS: "-Xms128m -Xmx256m"
+    deploy:
+      mode: replicated
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          memory: 1000MB
+          cpus: "0.5"
+    networks:
+      - logging
+    logging:
+      driver: "fluentd"
+      options:
+        fluentd-async-connect: "true"
+        tag: "docker.kickex-bot.elasticsearch.prod"
+
+  kibana:
+    image: kibana:7.13.3
+    depends_on:
+      - elasticsearch
+    environment:
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+    deploy:
+      mode: replicated
+      update_config:
+        parallelism: 1
+        delay: 10s
+      resources:
+        limits:
+          memory: 500MB
+          cpus: "0.5"
+    ports:
+      - "5601:5601"
+    networks:
+      - logging
+
+  fluentd:
+    image: soulgarden/kickex-bot:fluentd
+    depends_on:
+      - elasticsearch
+    deploy:
+      mode: replicated
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          memory: 200MB
+          cpus: "0.5"
+    ports:
+      - "24224:24224"
+      - "24224:24224/udp"
+    networks:
+      - logging

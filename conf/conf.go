@@ -14,15 +14,24 @@ type Bot struct {
 	DefaultAddr string `json:"default_addr" default:"demo.gate.kickex.com"`
 	Scheme      string `json:"scheme"       default:"wss"`
 
-	Pairs         []string `json:"pairs"          required:"true"`
-	TrackingPairs []string `json:"tracking_pairs" required:"true"`
-
-	SpreadForStartBuy      string `json:"spread_for_start_buy"       required:"true"`
-	SpreadForStartSell     string `json:"spread_for_start_sell"      required:"true"`
-	SpreadForStopBuyTrade  string `json:"spread_for_stop_buy_trade"  required:"true"`
-	SpreadForStopSellTrade string `json:"spread_for_stop_sell_trade" required:"true"`
-
-	TotalBuyInUSDT string `json:"total_buy_in_usdt" required:"true"`
+	Spread struct {
+		Pairs                  []string `json:"pairs"                      required:"true"`
+		SpreadForStartBuy      string   `json:"spread_for_start_buy"       required:"true"`
+		SpreadForStartSell     string   `json:"spread_for_start_sell"      required:"true"`
+		SpreadForStopBuyTrade  string   `json:"spread_for_stop_buy_trade"  required:"true"`
+		SpreadForStopSellTrade string   `json:"spread_for_stop_sell_trade" required:"true"`
+		TotalBuyInUSDT         string   `json:"total_buy_in_usdt" required:"true"`
+	} `json:"spread"`
+	Arbitrage struct {
+		Pairs          []string `json:"pairs" required:"true"`
+		TotalBuyInUSDT string   `json:"total_buy_in_usdt" required:"true"`
+	} `json:"arbitrage"`
+	Buy struct {
+		Pairs                 []string `json:"pairs"                      required:"true"`
+		SpreadForStartBuy     string   `json:"spread_for_start_buy"       required:"true"`
+		SpreadForStopBuyTrade string   `json:"spread_for_stop_buy_trade"  required:"true"`
+		TotalBuyInUSDT        string   `json:"total_buy_in_usdt" required:"true"`
+	} `json:"buy"`
 
 	Telegram struct {
 		Token  string `json:"token"`

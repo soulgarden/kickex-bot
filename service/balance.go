@@ -17,15 +17,30 @@ import (
 	"github.com/soulgarden/kickex-bot/storage"
 )
 
+const balanceTimeout = time.Second * 10
+
 type Balance struct {
-	storage     *storage.Storage
-	eventBroker *broker.Broker
-	wsSvc       *WS
-	logger      *zerolog.Logger
+	storage        *storage.Storage
+	eventBroker    *broker.Broker
+	accEventBroker *broker.Broker
+	wsSvc          *WS
+	logger         *zerolog.Logger
 }
 
-func NewBalance(storage *storage.Storage, eventBroker *broker.Broker, wsSvc *WS, logger *zerolog.Logger) *Balance {
-	return &Balance{storage: storage, eventBroker: eventBroker, wsSvc: wsSvc, logger: logger}
+func NewBalance(
+	storage *storage.Storage,
+	eventBroker *broker.Broker,
+	accEventBroker *broker.Broker,
+	wsSvc *WS,
+	logger *zerolog.Logger,
+) *Balance {
+	return &Balance{
+		storage:        storage,
+		eventBroker:    eventBroker,
+		accEventBroker: accEventBroker,
+		wsSvc:          wsSvc,
+		logger:         logger,
+	}
 }
 
 func (s *Balance) GetBalance(ctx context.Context, interrupt chan os.Signal) error {
@@ -114,7 +129,9 @@ func (s *Balance) GetBalance(ctx context.Context, interrupt chan os.Signal) erro
 		case <-ctx.Done():
 			return nil
 		case <-time.After(time.Minute):
-			s.logger.Error().Msg("update order state timeout")
+			s.logger.Err(dictionary.ErrUpdateOrderStateTimeout).Msg("update balance timeout")
+
+			return dictionary.ErrUpdateOrderStateTimeout
 		}
 	}
 }
@@ -159,6 +176,35 @@ func (s *Balance) UpdateStorageBalances(balances []*response.Balance) error {
 	}
 
 	return nil
+}
+
+func (s *Balance) WaitBalanceUpdate(ctx context.Context, pair string, amount *big.Float) error {
+	if s.storage.GetBalance(pair).Available.Cmp(amount) >= 0 {
+		return nil
+	}
+
+	accEventCh := s.accEventBroker.Subscribe()
+
+	defer s.accEventBroker.Unsubscribe(accEventCh)
+
+	for {
+		select {
+		case _, ok := <-accEventCh:
+			if !ok {
+				s.logger.Err(dictionary.ErrEventChannelClosed).Msg("event channel closed")
+
+				return dictionary.ErrEventChannelClosed
+			}
+
+			if s.storage.GetBalance(pair).Available.Cmp(amount) == 1 {
+				return nil
+			}
+		case <-ctx.Done():
+			return nil
+		case <-time.After(balanceTimeout):
+			return dictionary.ErrWaitBalanceUpdate
+		}
+	}
 }
 
 func (s *Balance) checkErrorResponse(msg []byte) error {

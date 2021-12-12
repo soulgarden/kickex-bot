@@ -23,7 +23,7 @@ import (
 
 type OrderBook struct {
 	cfg         *conf.Bot
-	pair        *response.Pair
+	pair        *storage.Pair
 	storage     *storage.Storage
 	eventBroker *broker.Broker
 	wsSvc       *service.WS
@@ -36,7 +36,7 @@ func NewOrderBook(
 	st *storage.Storage,
 	eventBroker *broker.Broker,
 	wsSvc *service.WS,
-	pair *response.Pair,
+	pair *storage.Pair,
 	orderBook *storage.Book,
 	logger *zerolog.Logger,
 ) *OrderBook {
@@ -255,17 +255,10 @@ func (s *OrderBook) createBookOrderByResponseOrder(o *response.Order, price *big
 		return nil, dictionary.ErrParseFloat
 	}
 
-	quotedToUSDTPrice, err := s.getQuotedToUSDTPrice()
-	if err != nil {
-		return nil, err
-	}
-
 	return &storage.BookOrder{
-		Price:     price,
-		USDTPrice: big.NewFloat(0).Mul(quotedToUSDTPrice, price),
-		Amount:    amount,
-		Total:     total,
-		USDTTotal: big.NewFloat(0).Mul(quotedToUSDTPrice, total),
+		Price:  price,
+		Amount: amount,
+		Total:  total,
 	}, nil
 }
 
@@ -315,28 +308,4 @@ func (s *OrderBook) checkErrorResponse(msg []byte) error {
 	}
 
 	return nil
-}
-
-func (s *OrderBook) getQuotedToUSDTPrice() (*big.Float, error) {
-	var quotedToUSDTPrice *big.Float
-
-	var ok bool
-
-	if s.pair.QuoteCurrency == dictionary.USDT {
-		quotedToUSDTPrice = big.NewFloat(1)
-	} else {
-		p := s.storage.GetPair(s.pair.QuoteCurrency + "/" + dictionary.USDT)
-
-		quotedToUSDTPrice, ok = big.NewFloat(0).SetString(p.Price)
-		if !ok {
-			s.logger.
-				Err(dictionary.ErrParseFloat).
-				Str("val", p.Price).
-				Msg("parse string as float")
-
-			return nil, dictionary.ErrParseFloat
-		}
-	}
-
-	return quotedToUSDTPrice, nil
 }

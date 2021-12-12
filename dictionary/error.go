@@ -17,3 +17,17 @@ var ErrOrderNotFoundOrOutdated = errors.New("order not found or outdated")
 var ErrCantConvertInterfaceToBytes = errors.New("can't convert interface to bytes")
 
 var ErrInsufficientFunds = errors.New("insufficient funds")
+
+var ErrUpdateOrderStateTimeout = errors.New("update order state timeout")
+
+var ErrWaitBalanceUpdate = errors.New("wait balance timeout")
+
+var ErrCancelOrderTimeout = errors.New("cancel order state timeout")
+
+var ErrEventChannelClosed = errors.New("event channel closed")
+
+var ErrOrderCreationEventNotReceived = errors.New("order creation event not received")
+
+var ErrOrderNotCompleted = errors.New("order not completed")
+
+var ErrChannelOverflowed = errors.New("channel overflowed")

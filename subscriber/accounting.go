@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/soulgarden/kickex-bot/broker"
 	"github.com/soulgarden/kickex-bot/service"
@@ -24,29 +25,32 @@ import (
 )
 
 type Accounting struct {
-	cfg           *conf.Bot
-	storage       *storage.Storage
-	wsEventBroker *broker.Broker
-	wsSvc         *service.WS
-	balanceSvc    *service.Balance
-	logger        *zerolog.Logger
+	cfg            *conf.Bot
+	storage        *storage.Storage
+	wsEventBroker  *broker.Broker
+	accEventBroker *broker.Broker
+	wsSvc          *service.WS
+	balanceSvc     *service.Balance
+	logger         *zerolog.Logger
 }
 
 func NewAccounting(
 	cfg *conf.Bot,
 	storage *storage.Storage,
 	eventBroker *broker.Broker,
+	accEventBroker *broker.Broker,
 	wsSvc *service.WS,
 	balanceSvc *service.Balance,
 	logger *zerolog.Logger,
 ) *Accounting {
 	return &Accounting{
-		cfg:           cfg,
-		storage:       storage,
-		wsEventBroker: eventBroker,
-		wsSvc:         wsSvc,
-		balanceSvc:    balanceSvc,
-		logger:        logger,
+		cfg:            cfg,
+		storage:        storage,
+		wsEventBroker:  eventBroker,
+		wsSvc:          wsSvc,
+		balanceSvc:     balanceSvc,
+		accEventBroker: accEventBroker,
+		logger:         logger,
 	}
 }
 
@@ -129,10 +133,19 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal, wg *sy
 			}
 
 			for _, order := range r.Orders {
+				createdTS, err := strconv.ParseInt(order.CreatedTimestamp, 10, 0)
+				if err != nil {
+					s.logger.Err(err).Bytes("msg", msg).Msg("parse string as int64")
+
+					interrupt <- syscall.SIGSTOP
+
+					return
+				}
+
 				o := &storage.Order{
 					ID:               order.ID,
 					TradeTimestamp:   order.TradeTimestamp,
-					CreatedTimestamp: order.CreatedTimestamp,
+					CreatedTimestamp: time.Unix(0, createdTS),
 					State:            order.State,
 					Modifier:         order.Modifier,
 					Pair:             order.Pair,
@@ -161,14 +174,16 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal, wg *sy
 					return
 				}
 
-				o.LimitPrice, ok = big.NewFloat(0).SetString(order.LimitPrice)
-				if !ok {
-					s.logger.Err(dictionary.ErrParseFloat).
-						Str("val", order.LimitPrice).
-						Msg("parse string as float")
-					interrupt <- syscall.SIGSTOP
+				if order.LimitPrice != "" {
+					o.LimitPrice, ok = big.NewFloat(0).SetString(order.LimitPrice)
+					if !ok {
+						s.logger.Err(dictionary.ErrParseFloat).
+							Str("val", order.LimitPrice).
+							Msg("parse string as float")
+						interrupt <- syscall.SIGSTOP
 
-					return
+						return
+					}
 				}
 
 				o.TotalSellVolume = big.NewFloat(0)
@@ -203,7 +218,9 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal, wg *sy
 
 				pair := strings.Split(o.Pair, "/")
 
-				s.storage.OrderBooks[pair[0]][pair[1]].EventBroker.Publish(0) //tdo: check existence
+				if v := s.storage.GetOrderBook(pair[0], pair[1]); v != nil {
+					v.EventBroker.Publish(0)
+				}
 			}
 
 			err = s.balanceSvc.UpdateStorageBalances(r.Balance)
@@ -216,7 +233,8 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal, wg *sy
 				return
 			}
 
-			s.storage.Deals = append(s.storage.Deals, r.Deals...)
+			s.storage.AppendDeals(r.Deals...)
+			s.accEventBroker.Publish(true)
 		case <-ctx.Done():
 			interrupt <- syscall.SIGSTOP
 

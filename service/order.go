@@ -20,37 +20,42 @@ import (
 	"github.com/soulgarden/kickex-bot/storage"
 )
 
+const cancelOrderTimeout = time.Second * 10
+
 type Order struct {
-	cfg         *conf.Bot
-	storage     *storage.Storage
-	eventBroker *broker.Broker
-	wsSvc       *WS
-	logger      *zerolog.Logger
+	cfg           *conf.Bot
+	storage       *storage.Storage
+	wsEventBroker *broker.Broker
+	wsSvc         *WS
+	logger        *zerolog.Logger
 }
 
 func NewOrder(
 	cfg *conf.Bot,
 	storage *storage.Storage,
-	eventBroker *broker.Broker,
+	wsEventBroker *broker.Broker,
 	wsSvc *WS,
 	logger *zerolog.Logger,
 ) *Order {
-	return &Order{cfg: cfg, storage: storage, eventBroker: eventBroker, wsSvc: wsSvc, logger: logger}
+	return &Order{cfg: cfg, storage: storage, wsEventBroker: wsEventBroker, wsSvc: wsSvc, logger: logger}
 }
 
 func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan os.Signal) error {
 	s.logger.Warn().Msg("order states updater starting...")
-	defer s.logger.Warn().Msg("order states updater  stopped")
+	defer s.logger.Warn().Msg("order states updater stopped")
 
-	eventsCh := s.eventBroker.Subscribe()
-	defer s.eventBroker.Unsubscribe(eventsCh)
+	eventsCh := s.wsEventBroker.Subscribe()
+	defer s.wsEventBroker.Unsubscribe(eventsCh)
 
-	oNumber := len(s.storage.GetUserOrders())
 	oNumberProcessed := 0
 
 	reqIds := map[string]bool{}
 
 	for _, o := range s.storage.GetUserOrders() {
+		if o.State > dictionary.StateActive {
+			continue
+		}
+
 		id, err := s.wsSvc.GetOrder(o.ID)
 		if err != nil {
 			s.logger.Err(err).Msg("get order")
@@ -62,6 +67,8 @@ func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan os.Signal
 
 		reqIds[strconv.FormatInt(id, 10)] = true
 	}
+
+	oNumber := len(reqIds)
 
 	for {
 		select {
@@ -98,7 +105,7 @@ func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan os.Signal
 				continue
 			}
 
-			err = s.processOrderMsg(msg)
+			_, err = s.processOrderMsg(msg)
 			if err != nil {
 				s.logger.Err(err).Msg("process order msg")
 
@@ -116,14 +123,16 @@ func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan os.Signal
 		case <-ctx.Done():
 			return nil
 		case <-time.After(time.Minute):
-			s.logger.Error().Msg("update order state timeout")
+			s.logger.Err(dictionary.ErrUpdateOrderStateTimeout).Msg("update order state timeout")
+
+			return dictionary.ErrUpdateOrderStateTimeout
 		}
 	}
 }
 
-func (s *Order) UpdateOrderStates(ctx context.Context, interrupt chan os.Signal, id int64) error {
-	eventsCh := s.eventBroker.Subscribe()
-	defer s.eventBroker.Unsubscribe(eventsCh)
+func (s *Order) UpdateOrderState(ctx context.Context, interrupt chan os.Signal, rid int64) (*storage.Order, error) {
+	eventsCh := s.wsEventBroker.Subscribe()
+	defer s.wsEventBroker.Unsubscribe(eventsCh)
 
 	for {
 		select {
@@ -133,7 +142,7 @@ func (s *Order) UpdateOrderStates(ctx context.Context, interrupt chan os.Signal,
 
 				interrupt <- syscall.SIGSTOP
 
-				return nil
+				return nil, nil
 			}
 
 			msg, ok := e.([]byte)
@@ -142,39 +151,41 @@ func (s *Order) UpdateOrderStates(ctx context.Context, interrupt chan os.Signal,
 
 				interrupt <- syscall.SIGSTOP
 
-				return dictionary.ErrCantConvertInterfaceToBytes
+				return nil, dictionary.ErrCantConvertInterfaceToBytes
 			}
 
-			rid := &response.ID{}
+			resp := &response.ID{}
 
-			err := json.Unmarshal(msg, rid)
+			err := json.Unmarshal(msg, resp)
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
 				interrupt <- syscall.SIGSTOP
 
-				return err
+				return nil, nil
 			}
 
-			if strconv.FormatInt(id, 10) != rid.ID {
+			if strconv.FormatInt(rid, 10) != resp.ID {
 				continue
 			}
 
-			err = s.processOrderMsg(msg)
+			o, err := s.processOrderMsg(msg)
 			if err != nil {
 				s.logger.Err(err).Msg("process order msg")
 
 				interrupt <- syscall.SIGSTOP
 
-				return err
+				return nil, err
 			}
 
-			return nil
+			return o, nil
 
 		case <-ctx.Done():
-			return nil
+			return nil, nil
 		case <-time.After(time.Minute):
-			s.logger.Error().Msg("update order state timeout")
+			s.logger.Err(dictionary.ErrUpdateOrderStateTimeout).Msg("update order state timeout")
+
+			return nil, dictionary.ErrUpdateOrderStateTimeout
 		}
 	}
 }
@@ -205,12 +216,12 @@ func (s *Order) checkErrorResponse(msg []byte) error {
 	return nil
 }
 
-func (s *Order) processOrderMsg(msg []byte) error {
+func (s *Order) processOrderMsg(msg []byte) (*storage.Order, error) {
 	var ok bool
 
 	err := s.checkErrorResponse(msg)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	r := &response.GetOrder{}
@@ -219,76 +230,165 @@ func (s *Order) processOrderMsg(msg []byte) error {
 	if err != nil {
 		s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
-		return err
+		return nil, err
 	}
 
-	if r.Order != nil {
-		o := &storage.Order{
-			ID:               r.Order.ID,
-			TradeTimestamp:   r.Order.TradeTimestamp,
-			CreatedTimestamp: r.Order.CreatedTimestamp,
-			State:            r.Order.State,
-			Modifier:         r.Order.Modifier,
-			Pair:             r.Order.Pair,
-			TradeIntent:      r.Order.TradeIntent,
-			TotalFeeQuoted:   r.Order.TotalFeeQuoted,
-			TotalFeeExt:      r.Order.TotalFeeExt,
-			Activated:        r.Order.Activated,
-			TpActivateLevel:  r.Order.TpActivateLevel,
-			TrailDistance:    r.Order.TrailDistance,
-			TpSubmitLevel:    r.Order.TpSubmitLevel,
-			TpLimitPrice:     r.Order.LimitPrice,
-			SlSubmitLevel:    r.Order.SlSubmitLevel,
-			SlLimitPrice:     r.Order.SlLimitPrice,
-			StopTimestamp:    r.Order.StopTimestamp,
-			TriggeredSide:    r.Order.TriggeredSide,
-		}
+	if r.Order == nil {
+		return nil, nil
+	}
 
-		o.OrderedVolume, ok = big.NewFloat(0).SetString(r.Order.OrderedVolume)
+	createdTS, err := strconv.ParseInt(r.Order.CreatedTimestamp, 10, 0)
+	if err != nil {
+		s.logger.Err(err).Bytes("msg", msg).Msg("parse string as int64")
+
+		return nil, err
+	}
+
+	o := &storage.Order{
+		ID:               r.Order.ID,
+		TradeTimestamp:   r.Order.TradeTimestamp,
+		CreatedTimestamp: time.Unix(0, createdTS),
+		State:            r.Order.State,
+		Modifier:         r.Order.Modifier,
+		Pair:             r.Order.Pair,
+		TradeIntent:      r.Order.TradeIntent,
+		TotalFeeQuoted:   r.Order.TotalFeeQuoted,
+		TotalFeeExt:      r.Order.TotalFeeExt,
+		Activated:        r.Order.Activated,
+		TpActivateLevel:  r.Order.TpActivateLevel,
+		TrailDistance:    r.Order.TrailDistance,
+		TpSubmitLevel:    r.Order.TpSubmitLevel,
+		TpLimitPrice:     r.Order.LimitPrice,
+		SlSubmitLevel:    r.Order.SlSubmitLevel,
+		SlLimitPrice:     r.Order.SlLimitPrice,
+		StopTimestamp:    r.Order.StopTimestamp,
+		TriggeredSide:    r.Order.TriggeredSide,
+	}
+
+	o.OrderedVolume, ok = big.NewFloat(0).SetString(r.Order.OrderedVolume)
+	if !ok {
+		s.logger.Err(dictionary.ErrParseFloat).
+			Str("val", r.Order.OrderedVolume).
+			Msg("parse string as float")
+
+		return nil, err
+	}
+
+	o.LimitPrice, ok = big.NewFloat(0).SetString(r.Order.LimitPrice)
+	if !ok {
+		s.logger.Err(dictionary.ErrParseFloat).
+			Str("val", r.Order.LimitPrice).
+			Msg("parse string as float")
+
+		return nil, err
+	}
+
+	o.TotalSellVolume = big.NewFloat(0)
+	if r.Order.TotalSellVolume != "" {
+		o.TotalSellVolume, ok = big.NewFloat(0).SetString(r.Order.TotalSellVolume)
 		if !ok {
 			s.logger.Err(dictionary.ErrParseFloat).
-				Str("val", r.Order.OrderedVolume).
+				Str("val", r.Order.TotalSellVolume).
 				Msg("parse string as float")
 
-			return err
+			return nil, err
 		}
+	}
 
-		o.LimitPrice, ok = big.NewFloat(0).SetString(r.Order.LimitPrice)
+	o.TotalBuyVolume = big.NewFloat(0)
+	if r.Order.TotalBuyVolume != "" {
+		o.TotalBuyVolume, ok = big.NewFloat(0).SetString(r.Order.TotalBuyVolume)
 		if !ok {
 			s.logger.Err(dictionary.ErrParseFloat).
-				Str("val", r.Order.LimitPrice).
+				Str("val", r.Order.TotalBuyVolume).
 				Msg("parse string as float")
 
-			return err
+			return nil, err
 		}
+	}
 
-		o.TotalSellVolume = big.NewFloat(0)
-		if r.Order.TotalSellVolume != "" {
-			o.TotalSellVolume, ok = big.NewFloat(0).SetString(r.Order.TotalSellVolume)
+	s.storage.UpsertUserOrder(o)
+	s.logger.Warn().Int64("oid", r.Order.ID).Msg("order state updated")
+
+	return o, nil
+}
+
+func (s *Order) CancelOrder(orderID int64) error {
+	eventsCh := s.wsEventBroker.Subscribe()
+	defer s.wsEventBroker.Unsubscribe(eventsCh)
+
+	id, err := s.wsSvc.CancelOrder(orderID)
+	if err != nil {
+		s.logger.Fatal().Int64("oid", orderID).Msg("cancel order")
+	}
+
+	for {
+		select {
+		case e := <-eventsCh:
+			msg, ok := e.([]byte)
 			if !ok {
-				s.logger.Err(dictionary.ErrParseFloat).
-					Str("val", r.Order.TotalSellVolume).
-					Msg("parse string as float")
+				return dictionary.ErrCantConvertInterfaceToBytes
+			}
+
+			rid := &response.ID{}
+			err := json.Unmarshal(msg, rid)
+
+			if err != nil {
+				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
 				return err
 			}
-		}
 
-		o.TotalBuyVolume = big.NewFloat(0)
-		if r.Order.TotalBuyVolume != "" {
-			o.TotalBuyVolume, ok = big.NewFloat(0).SetString(r.Order.TotalBuyVolume)
-			if !ok {
-				s.logger.Err(dictionary.ErrParseFloat).
-					Str("val", r.Order.TotalBuyVolume).
-					Msg("parse string as float")
-
-				return err
+			if strconv.FormatInt(id, 10) != rid.ID {
+				continue
 			}
-		}
 
-		s.storage.UpsertUserOrder(o)
-		s.logger.Warn().Int64("oid", r.Order.ID).Msg("order state updated")
+			s.logger.Info().
+				Int64("oid", orderID).
+				Bytes("payload", msg).
+				Msg("cancel order response received")
+
+			er := &response.Error{}
+
+			err = json.Unmarshal(msg, er)
+			if err != nil {
+				s.logger.Fatal().Err(err).Msg("unmarshall")
+			}
+
+			if er.Error != nil {
+				if er.Error.Reason != response.CancelledOrder {
+					if er.Error.Code == response.DoneOrderCode {
+						s.logger.Err(err).Bytes("response", msg).Msg("can't cancel order")
+
+						return dictionary.ErrCantCancelDoneOrder
+					}
+
+					err = fmt.Errorf("%w: %s", dictionary.ErrResponse, er.Error.Reason)
+					s.logger.Err(err).Bytes("response", msg).Msg("can't cancel order")
+
+					return err
+				}
+			}
+
+			return nil
+
+		case <-time.After(cancelOrderTimeout):
+			s.logger.Err(err).Msg(err.Error())
+
+			return dictionary.ErrCancelOrderTimeout
+		}
+	}
+}
+
+func (s *Order) SendCancelOrderRequest(orderID int64) {
+	_, err := s.wsSvc.CancelOrder(orderID)
+	if err != nil {
+		s.logger.Fatal().
+			Int64("oid", orderID).
+			Msg("send cancel order request")
 	}
 
-	return nil
+	s.logger.Warn().
+		Int64("oid", orderID).
+		Msg("send cancel order request")
 }
