@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kickex-bot.fullname" . }}-config
+  labels:
+    {{- include "kickex-bot.labels" . | nindent 4 }}
+data:
+  config.json: |
+    {
+      "api_key": "{{ .Values.app.api_key }}",
+      "api_key_pass": "{{ .Values.app.api_key_pass }}",
+      "default_addr": "{{ .Values.app.default_addr }}",
+      "scheme": "{{ .Values.app.scheme }}",
+      "spread": {
+        "pair": "{{ .Values.app.spread.pair }}",
+        "spread_for_start_buy": "{{ .Values.app.spread.spread_for_start_buy }}",
+        "spread_for_start_sell": "{{ .Values.app.spread.spread_for_start_sell }}",
+        "spread_for_stop_buy_trade": "{{ .Values.app.spread.spread_for_stop_buy_trade }}",
+        "spread_for_stop_sell_trade": "{{ .Values.app.spread.spread_for_stop_sell_trade }}",
+        "total_buy_in_usdt": "{{ .Values.app.spread.total_buy_in_usd }}"
+      },
+      "buy": {
+        "pair": "{{ .Values.app.buy.pair }}",
+        "spread_for_start_buy": "{{ .Values.app.buy.spread_for_start_buy }}",
+        "spread_for_stop_buy_trade": "{{ .Values.app.buy.spread_for_stop_buy_trade }}",
+        "total_buy_in_usdt": "{{ .Values.app.buy.total_buy_in_usdt }}"
+      },
+      "arbitrage": {
+        "pair": "{{ .Values.app.arbitrage.pair }}",
+        "total_buy_in_usdt": "{{ .Values.app.arbitrage.total_buy_in_usdt }}"
+      },
+      "telegram": {
+        "token": "{{ .Values.app.telegram.token }}",
+        "chat_id": {{ int .Values.app.telegram.chat_id }}
+      },
+      "env": "{{ .Values.app.env }}",
+      "storage_dump_path": "{{ .Values.app.storage_dump_path }}",
+      "debug": {{ .Values.app.debug }}
+    }

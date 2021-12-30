@@ -8,7 +8,7 @@ volumes:
 
 services:
   arbitrage:
-    image: soulgarden/kickex-bot:1.0.54
+    image: soulgarden/kickex-bot:1.0.55
     environment:
       CFG_PATH: /conf.local.json
     stop_signal: SIGINT
@@ -28,7 +28,7 @@ services:
         tag: "docker.kickex-bot.arbitrage.prod"
 
   spread:
-    image: soulgarden/kickex-bot:1.0.54
+    image: soulgarden/kickex-bot:1.0.55
     environment:
       CFG_PATH: /conf.local.json
     stop_signal: SIGINT
@@ -43,24 +43,8 @@ services:
         fluentd-async-connect: "true"
         tag: "docker.kickex-bot.spread.prod"
 
-  spread_small:
-    image: soulgarden/kickex-bot:1.0.54
-    environment:
-      CFG_PATH: /conf.local.json
-    stop_signal: SIGINT
-    volumes:
-      - ./conf/conf.remote.small.json:/conf.local.json
-      - ./storage:/storage
-    networks:
-      - logging
-    logging:
-      driver: "fluentd"
-      options:
-        fluentd-async-connect: "true"
-        tag: "docker.kickex-bot.spread-small.prod"
-
   buy:
-    image: soulgarden/kickex-bot:1.0.54
+    image: soulgarden/kickex-bot:1.0.55
     environment:
       CFG_PATH: /conf.local.json
     stop_signal: SIGINT
