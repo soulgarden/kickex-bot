@@ -37,11 +37,11 @@ type Book struct {
 	bids map[string]*BookOrder
 	asks map[string]*BookOrder
 
-	EventBroker *broker.Broker
-	pair        *Pair
+	OrderBookEventBroker *broker.Broker
+	pair                 *Pair
 }
 
-func NewBook(storage *Storage, pair *Pair, eventBroker *broker.Broker) *Book {
+func NewBook(storage *Storage, pair *Pair, orderBookEventBroker *broker.Broker) *Book {
 	return &Book{
 		mx:                    sync.RWMutex{},
 		storage:               storage,
@@ -58,7 +58,7 @@ func NewBook(storage *Storage, pair *Pair, eventBroker *broker.Broker) *Book {
 		BoughtCost:            big.NewFloat(0),
 		bids:                  make(map[string]*BookOrder),
 		asks:                  make(map[string]*BookOrder),
-		EventBroker:           eventBroker,
+		OrderBookEventBroker:  orderBookEventBroker,
 		pair:                  pair,
 	}
 }
@@ -70,7 +70,7 @@ func ResetDumpedBook(book *Book, pair *Pair, eventBroker *broker.Broker) *Book {
 	book.Spread = &big.Float{}
 	book.bids = make(map[string]*BookOrder)
 	book.asks = make(map[string]*BookOrder)
-	book.EventBroker = eventBroker
+	book.OrderBookEventBroker = eventBroker
 	book.pair = pair
 
 	return book
@@ -197,7 +197,7 @@ func (b *Book) UpdateMaxBidPrice() bool {
 		strToFloatPrices := map[float64]string{}
 
 		for price := range b.bids {
-			pf, err := strconv.ParseFloat(price, 64)
+			pf, err := strconv.ParseFloat(price, dictionary.DefaultNumberBitSize)
 			if err != nil {
 				return false
 			}
@@ -230,7 +230,7 @@ func (b *Book) UpdateMinAskPrice() bool {
 		strToFloatPrices := map[float64]string{}
 
 		for price := range b.asks {
-			pf, err := strconv.ParseFloat(price, 64)
+			pf, err := strconv.ParseFloat(price, dictionary.DefaultNumberBitSize)
 			if err != nil {
 				return false
 			}

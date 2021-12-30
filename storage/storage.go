@@ -31,7 +31,7 @@ func NewStorage() *Storage {
 	}
 }
 
-func (s *Storage) RegisterOrderBook(pair *Pair, eventBroker *broker.Broker) *Book {
+func (s *Storage) RegisterOrderBook(pair *Pair, orderBookEventBroker *broker.Broker) *Book {
 	s.mx.Lock()
 	defer s.mx.Unlock()
 
@@ -40,10 +40,10 @@ func (s *Storage) RegisterOrderBook(pair *Pair, eventBroker *broker.Broker) *Boo
 	}
 
 	if _, ok := s.orderBooks[pair.BaseCurrency][pair.QuoteCurrency]; !ok {
-		s.orderBooks[pair.BaseCurrency][pair.QuoteCurrency] = NewBook(s, pair, eventBroker)
+		s.orderBooks[pair.BaseCurrency][pair.QuoteCurrency] = NewBook(s, pair, orderBookEventBroker)
 	} else { // loaded from dump
 		book := s.orderBooks[pair.BaseCurrency][pair.QuoteCurrency]
-		ResetDumpedBook(book, pair, eventBroker)
+		ResetDumpedBook(book, pair, orderBookEventBroker)
 	}
 
 	return s.orderBooks[pair.BaseCurrency][pair.QuoteCurrency]

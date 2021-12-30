@@ -87,7 +87,7 @@ func (s *Balance) GetBalance(ctx context.Context, interrupt chan os.Signal) erro
 				return err
 			}
 
-			if strconv.FormatInt(id, 10) != rid.ID {
+			if strconv.FormatInt(id, dictionary.DefaultIntBase) != rid.ID {
 				continue
 			}
 
@@ -178,7 +178,7 @@ func (s *Balance) UpdateStorageBalances(balances []*response.Balance) error {
 	return nil
 }
 
-func (s *Balance) WaitBalanceUpdate(ctx context.Context, pair string, amount *big.Float) error {
+func (s *Balance) WaitForSufficientBalance(ctx context.Context, pair string, amount *big.Float) error {
 	if s.storage.GetBalance(pair).Available.Cmp(amount) >= 0 {
 		return nil
 	}

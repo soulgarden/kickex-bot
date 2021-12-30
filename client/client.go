@@ -160,7 +160,7 @@ func (c *Client) authorize(apiKey, apiKeyPass string) error {
 	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.Auth{
-		ID:       strconv.FormatInt(id, 10),
+		ID:       strconv.FormatInt(id, dictionary.DefaultIntBase),
 		Type:     dictionary.AuthType,
 		APIKey:   apiKey,
 		Password: apiKeyPass,
@@ -174,7 +174,7 @@ func (c *Client) getUserOpenOrders(pair string) (int64, error) {
 	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.GetUsersOpenOrders{
-		ID:   strconv.FormatInt(id, 10),
+		ID:   strconv.FormatInt(id, dictionary.DefaultIntBase),
 		Type: dictionary.GetUsersOpenOrders,
 		Pair: pair,
 	}
@@ -186,7 +186,7 @@ func (c *Client) SubscribeAccounting(includeDeals bool) (int64, error) {
 	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.SubscribeAccounting{
-		ID:           strconv.FormatInt(id, 10),
+		ID:           strconv.FormatInt(id, dictionary.DefaultIntBase),
 		Type:         dictionary.SubscribeAccounting,
 		IncludeDeals: includeDeals,
 	}
@@ -198,7 +198,7 @@ func (c *Client) GetOrderBookAndSubscribe(pairs string) (int64, error) {
 	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.GetOrderBookAndSubscribe{
-		ID:   strconv.FormatInt(id, 10),
+		ID:   strconv.FormatInt(id, dictionary.DefaultIntBase),
 		Type: dictionary.GetOrderBookAndSubscribe,
 		Pair: pairs,
 	}
@@ -210,7 +210,7 @@ func (c *Client) GetPairsAndSubscribe() (int64, error) {
 	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.GetPairsAndSubscribe{
-		ID:   strconv.FormatInt(id, 10),
+		ID:   strconv.FormatInt(id, dictionary.DefaultIntBase),
 		Type: dictionary.GetPairsAndSubscribe,
 	}
 
@@ -221,7 +221,7 @@ func (c *Client) CreateOrder(pair, volume, limitPrice string, tradeIntent int) (
 	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.CreateOrder{
-		ID:   strconv.FormatInt(id, 10),
+		ID:   strconv.FormatInt(id, dictionary.DefaultIntBase),
 		Type: dictionary.CreateTradeOrder,
 		Fields: &request.CreateOrderFields{
 			Pair:          pair,
@@ -240,7 +240,7 @@ func (c *Client) AlterOrder(pair, volume, limitPrice string, tradeIntent int, or
 
 	body := &request.AlterTradeOrder{
 		CreateOrder: request.CreateOrder{
-			ID:   strconv.FormatInt(id, 10),
+			ID:   strconv.FormatInt(id, dictionary.DefaultIntBase),
 			Type: dictionary.AlterTradeOrder,
 			Fields: &request.CreateOrderFields{
 				Pair:          pair,
@@ -260,7 +260,7 @@ func (c *Client) CancelOrder(orderID int64) (int64, error) {
 	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.CancelOrder{
-		ID:      strconv.FormatInt(id, 10),
+		ID:      strconv.FormatInt(id, dictionary.DefaultIntBase),
 		Type:    dictionary.CancelOrder,
 		OrderID: orderID,
 	}
@@ -272,7 +272,7 @@ func (c *Client) GetOrder(orderID int64) (int64, error) {
 	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.GetOrder{
-		ID:      strconv.FormatInt(id, 10),
+		ID:      strconv.FormatInt(id, dictionary.DefaultIntBase),
 		Type:    dictionary.GetOrder,
 		OrderID: orderID,
 	}
@@ -284,7 +284,7 @@ func (c *Client) GetOrderByExtID(extID string) (int64, error) {
 	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.GetOrder{
-		ID:         strconv.FormatInt(id, 10),
+		ID:         strconv.FormatInt(id, dictionary.DefaultIntBase),
 		Type:       dictionary.GetOrder,
 		ExternalID: extID,
 	}
@@ -296,7 +296,7 @@ func (c *Client) GetBalance() (int64, error) {
 	id := atomic.AddInt64(&c.id, 1)
 
 	body := &request.GetBalance{
-		ID:   strconv.FormatInt(id, 10),
+		ID:   strconv.FormatInt(id, dictionary.DefaultIntBase),
 		Type: dictionary.GetBalance,
 	}
 

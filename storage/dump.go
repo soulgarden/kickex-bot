@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"io/ioutil"
 
+	"github.com/soulgarden/kickex-bot/dictionary"
+
 	"github.com/soulgarden/kickex-bot/response"
 )
 
@@ -33,7 +35,7 @@ func (d *DumpStorage) DumpStorage(path string) error {
 		return err
 	}
 
-	err = ioutil.WriteFile(path, marshalled, 0600)
+	err = ioutil.WriteFile(path, marshalled, dictionary.DumpFilePermissions)
 
 	return err
 }

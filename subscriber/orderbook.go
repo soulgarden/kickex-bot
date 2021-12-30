@@ -102,7 +102,7 @@ func (s *OrderBook) Start(ctx context.Context, wg *sync.WaitGroup, interrupt cha
 				return
 			}
 
-			if strconv.FormatInt(id, 10) != rid.ID {
+			if strconv.FormatInt(id, dictionary.DefaultIntBase) != rid.ID {
 				continue
 			}
 
@@ -150,7 +150,7 @@ func (s *OrderBook) Start(ctx context.Context, wg *sync.WaitGroup, interrupt cha
 
 			s.updateSpread()
 
-			s.orderBook.EventBroker.Publish(0)
+			s.orderBook.OrderBookEventBroker.Publish(0)
 		case <-ctx.Done():
 			return
 		}

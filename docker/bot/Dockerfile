@@ -1,4 +1,4 @@
-FROM golang:1.16.2-alpine3.13 as builder
+FROM golang:1.17.2-alpine3.14 as builder
 
 ENV GOPATH=/go
 
@@ -8,11 +8,12 @@ WORKDIR $GOPATH/src/github.com/soulgarden/kickex-bot
 
 RUN go build -o /bin/bot
 
-FROM alpine:3.13
+FROM alpine:3.14
 
-RUN addgroup -S www-data \
-    && adduser -S www-data -G www-data
+RUN adduser -S www-data -G www-data
 
 COPY --from=builder --chown=www-data /bin/bot /bin/bot
+
+USER www-data
 
 CMD ["/bin/bot", "spread"]

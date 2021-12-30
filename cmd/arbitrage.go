@@ -167,7 +167,7 @@ var arbitrageCmd = &cobra.Command{
 
 			<-time.After(ShutDownDuration)
 
-			logger.Warn().Msg("killed by shutdown timeout")
+			logger.Error().Msg("killed by shutdown timeout")
 
 			os.Exit(1)
 		}()

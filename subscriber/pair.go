@@ -89,7 +89,7 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan os.Signal, wg *sync.Wa
 				return
 			}
 
-			if strconv.FormatInt(id, 10) != rid.ID {
+			if strconv.FormatInt(id, dictionary.DefaultIntBase) != rid.ID {
 				continue
 			}
 

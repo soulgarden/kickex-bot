@@ -4,9 +4,7 @@
   "default_addr": "demo.gate.kickex.com",
   "scheme": "wss",
   "spread": {
-    "pairs": [
-      "KICK/USDT"
-    ],
+    "pair": "KICK/USDT",
     "spread_for_start_buy": "3",
     "spread_for_start_sell": "0.8",
     "spread_for_stop_buy_trade": "1.7",
@@ -14,19 +12,14 @@
     "total_buy_in_usdt": "10"
   },
   "buy": {
-    "pairs": [
-      "KICK/USDT"
-    ],
+    "pair": "KICK/USDT",
     "spread_for_start_buy": "3",
     "spread_for_stop_buy_trade": "1.7",
     "total_buy_in_usdt": "10"
   },
   "arbitrage": {
-    "pairs": [
-      "KICK/BTC",
-      "KICK/ETH"
-    ],
-    "total_buy_in_usdt": "10"
+    "pair": "KICK/ETH",
+    "total_buy_in_usdt": "5"
   },
   "telegram": {
     "token": "",

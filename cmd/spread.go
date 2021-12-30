@@ -83,7 +83,7 @@ var spreadCmd = &cobra.Command{
 
 			<-time.After(ShutDownDuration)
 
-			logger.Warn().Msg("killed by shutdown timeout")
+			logger.Error().Msg("killed by shutdown timeout")
 
 			os.Exit(1)
 		}()
@@ -141,14 +141,7 @@ var spreadCmd = &cobra.Command{
 		go pairs.Start(ctx, interrupt, &wg)
 
 		for {
-			pairsNum := len(cfg.Spread.Pairs)
-			for _, pairName := range cfg.Spread.Pairs {
-				if st.GetPair(pairName) != nil {
-					pairsNum--
-				}
-			}
-
-			if pairsNum == 0 {
+			if st.GetPair(cfg.Spread.Pair) != nil {
 				break
 			}
 
@@ -158,47 +151,41 @@ var spreadCmd = &cobra.Command{
 		wg.Add(1)
 		go accounting.Start(ctx, interrupt, &wg)
 
-		for _, pairName := range cfg.Spread.Pairs {
-			pair := st.GetPair(pairName)
-			if pair == nil {
-				logger.
-					Err(dictionary.ErrInvalidPair).
-					Str("pair", pairName).
-					Msg(dictionary.ErrInvalidPair.Error())
+		pair := st.GetPair(cfg.Spread.Pair)
+		if pair == nil {
+			logger.
+				Err(dictionary.ErrInvalidPair).
+				Str("pair", cfg.Spread.Pair).
+				Msg(dictionary.ErrInvalidPair.Error())
 
-				cancel()
+			cancel()
+		}
 
-				break
-			}
+		orderBookEventBroker := broker.New(&logger)
+		go orderBookEventBroker.Start()
 
-			orderBookEventBroker := broker.New(&logger)
-			go orderBookEventBroker.Start()
+		orderBook := st.RegisterOrderBook(pair, orderBookEventBroker)
 
-			orderBook := st.RegisterOrderBook(pair, orderBookEventBroker)
+		wg.Add(1)
+		go subscriber.NewOrderBook(cfg, st, wsEventBroker, wsSvc, pair, orderBook, &logger).Start(ctx, &wg, interrupt)
 
-			wg.Add(1)
-			go subscriber.NewOrderBook(cfg, st, wsEventBroker, wsSvc, pair, orderBook, &logger).Start(ctx, &wg, interrupt)
-
-			spreadTrader, err := strategy.NewSpread(
-				cfg,
-				st,
-				wsEventBroker,
-				accEventBroker,
-				service.NewConversion(st, &logger),
-				tgSvc,
-				wsSvc,
-				pair,
-				orderBook,
-				orderSvc,
-				sessSvc,
-				&logger,
-			)
-			if err != nil {
-				cancel()
-
-				break
-			}
-
+		spreadTrader, err := strategy.NewSpread(
+			cfg,
+			st,
+			wsEventBroker,
+			accEventBroker,
+			service.NewConversion(st, &logger),
+			tgSvc,
+			wsSvc,
+			pair,
+			orderBook,
+			orderSvc,
+			sessSvc,
+			&logger,
+		)
+		if err != nil {
+			cancel()
+		} else {
 			wg.Add(1)
 			go spreadTrader.Start(ctx, &wg, interrupt)
 		}

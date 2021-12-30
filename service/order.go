@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math/big"
 	"os"
 	"strconv"
 	"syscall"
@@ -65,7 +64,7 @@ func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan os.Signal
 			return err
 		}
 
-		reqIds[strconv.FormatInt(id, 10)] = true
+		reqIds[strconv.FormatInt(id, dictionary.DefaultIntBase)] = true
 	}
 
 	oNumber := len(reqIds)
@@ -165,7 +164,7 @@ func (s *Order) UpdateOrderState(ctx context.Context, interrupt chan os.Signal, 
 				return nil, nil
 			}
 
-			if strconv.FormatInt(rid, 10) != resp.ID {
+			if strconv.FormatInt(rid, dictionary.ExtendedPrecision) != resp.ID {
 				continue
 			}
 
@@ -217,8 +216,6 @@ func (s *Order) checkErrorResponse(msg []byte) error {
 }
 
 func (s *Order) processOrderMsg(msg []byte) (*storage.Order, error) {
-	var ok bool
-
 	err := s.checkErrorResponse(msg)
 	if err != nil {
 		return nil, err
@@ -237,74 +234,11 @@ func (s *Order) processOrderMsg(msg []byte) (*storage.Order, error) {
 		return nil, nil
 	}
 
-	createdTS, err := strconv.ParseInt(r.Order.CreatedTimestamp, 10, 0)
+	o, err := storage.NewOrderByResponse(r.Order)
 	if err != nil {
-		s.logger.Err(err).Bytes("msg", msg).Msg("parse string as int64")
+		s.logger.Err(err).Msg("new order by response")
 
 		return nil, err
-	}
-
-	o := &storage.Order{
-		ID:               r.Order.ID,
-		TradeTimestamp:   r.Order.TradeTimestamp,
-		CreatedTimestamp: time.Unix(0, createdTS),
-		State:            r.Order.State,
-		Modifier:         r.Order.Modifier,
-		Pair:             r.Order.Pair,
-		TradeIntent:      r.Order.TradeIntent,
-		TotalFeeQuoted:   r.Order.TotalFeeQuoted,
-		TotalFeeExt:      r.Order.TotalFeeExt,
-		Activated:        r.Order.Activated,
-		TpActivateLevel:  r.Order.TpActivateLevel,
-		TrailDistance:    r.Order.TrailDistance,
-		TpSubmitLevel:    r.Order.TpSubmitLevel,
-		TpLimitPrice:     r.Order.LimitPrice,
-		SlSubmitLevel:    r.Order.SlSubmitLevel,
-		SlLimitPrice:     r.Order.SlLimitPrice,
-		StopTimestamp:    r.Order.StopTimestamp,
-		TriggeredSide:    r.Order.TriggeredSide,
-	}
-
-	o.OrderedVolume, ok = big.NewFloat(0).SetString(r.Order.OrderedVolume)
-	if !ok {
-		s.logger.Err(dictionary.ErrParseFloat).
-			Str("val", r.Order.OrderedVolume).
-			Msg("parse string as float")
-
-		return nil, err
-	}
-
-	o.LimitPrice, ok = big.NewFloat(0).SetString(r.Order.LimitPrice)
-	if !ok {
-		s.logger.Err(dictionary.ErrParseFloat).
-			Str("val", r.Order.LimitPrice).
-			Msg("parse string as float")
-
-		return nil, err
-	}
-
-	o.TotalSellVolume = big.NewFloat(0)
-	if r.Order.TotalSellVolume != "" {
-		o.TotalSellVolume, ok = big.NewFloat(0).SetString(r.Order.TotalSellVolume)
-		if !ok {
-			s.logger.Err(dictionary.ErrParseFloat).
-				Str("val", r.Order.TotalSellVolume).
-				Msg("parse string as float")
-
-			return nil, err
-		}
-	}
-
-	o.TotalBuyVolume = big.NewFloat(0)
-	if r.Order.TotalBuyVolume != "" {
-		o.TotalBuyVolume, ok = big.NewFloat(0).SetString(r.Order.TotalBuyVolume)
-		if !ok {
-			s.logger.Err(dictionary.ErrParseFloat).
-				Str("val", r.Order.TotalBuyVolume).
-				Msg("parse string as float")
-
-			return nil, err
-		}
 	}
 
 	s.storage.UpsertUserOrder(o)
@@ -339,7 +273,7 @@ func (s *Order) CancelOrder(orderID int64) error {
 				return err
 			}
 
-			if strconv.FormatInt(id, 10) != rid.ID {
+			if strconv.FormatInt(id, dictionary.DefaultIntBase) != rid.ID {
 				continue
 			}
 

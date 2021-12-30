@@ -193,8 +193,8 @@ func (s *Buy) orderCreationDecider(ctx context.Context, sess *buy.Session, inter
 		Str("pair", s.pair.GetPairName()).
 		Msg("order creation decider stopped")
 
-	e := s.orderBook.EventBroker.Subscribe()
-	defer s.orderBook.EventBroker.Unsubscribe(e)
+	e := s.orderBook.OrderBookEventBroker.Subscribe()
+	defer s.orderBook.OrderBookEventBroker.Unsubscribe(e)
 
 	for {
 		select {
@@ -437,7 +437,7 @@ func (s *Buy) createBuyOrder(sess *buy.Session) error {
 	}
 
 	sess.SetActiveBuyExtOrderID(extID)
-	sess.SetActiveBuyOrderRequestID(strconv.FormatInt(rid, 10))
+	sess.SetActiveBuyOrderRequestID(strconv.FormatInt(rid, dictionary.DefaultIntBase))
 
 	return nil
 }
@@ -449,9 +449,9 @@ func (s *Buy) watchOrder(ctx context.Context, interrupt chan os.Signal, sess *bu
 		Int64("oid", orderID).
 		Msg("start watch order process")
 
-	bookEventCh := s.orderBook.EventBroker.Subscribe()
+	bookEventCh := s.orderBook.OrderBookEventBroker.Subscribe()
 
-	defer s.orderBook.EventBroker.Unsubscribe(bookEventCh)
+	defer s.orderBook.OrderBookEventBroker.Unsubscribe(bookEventCh)
 
 	accEventCh := s.accEventBroker.Subscribe()
 
@@ -587,7 +587,7 @@ func (s *Buy) checkOrderState(
 					Int64("oid", orderID).
 					Msg("expected cancelled state, but got done")
 
-				s.orderBook.EventBroker.Publish(0)
+				s.orderBook.OrderBookEventBroker.Publish(0)
 
 				return false, nil
 			}
@@ -621,9 +621,9 @@ func (s *Buy) checkOrderState(
 
 			sess.SetPrevBuyOrderID(orderID)
 			sess.SetActiveBuyExtOrderID(extID)
-			sess.SetActiveBuyOrderRequestID(strconv.FormatInt(rid, 10))
+			sess.SetActiveBuyOrderRequestID(strconv.FormatInt(rid, dictionary.DefaultIntBase))
 
-			s.orderBook.EventBroker.Publish(0) // don't wait change order book
+			s.orderBook.OrderBookEventBroker.Publish(0) // don't wait change order book
 		} else {
 			err := s.orderSvc.CancelOrder(orderID)
 			if err != nil {
@@ -634,7 +634,7 @@ func (s *Buy) checkOrderState(
 						Int64("oid", orderID).
 						Msg("expected cancelled buy order state, but got done")
 
-					s.orderBook.EventBroker.Publish(0)
+					s.orderBook.OrderBookEventBroker.Publish(0)
 
 					return false, nil
 				}
@@ -646,7 +646,7 @@ func (s *Buy) checkOrderState(
 			sess.SetActiveBuyOrderID(0)
 			sess.SetIsNeedToCreateBuyOrder(true)
 
-			s.orderBook.EventBroker.Publish(0) // don't wait change order book
+			s.orderBook.OrderBookEventBroker.Publish(0) // don't wait change order book
 		}
 
 		return true, nil
@@ -732,7 +732,7 @@ func (s *Buy) setBuyOrderExecutedFlags(sess *buy.Session, order *storage.Order) 
 	s.orderBook.AddBoughtCost(s.sessSvc.GetSessTotalBoughtCost(sess))
 	s.orderBook.AddBoughtVolume(s.sessSvc.GetSessTotalBoughtVolume(sess))
 
-	s.orderBook.EventBroker.Publish(0)
+	s.orderBook.OrderBookEventBroker.Publish(0)
 
 	s.tgSvc.Send(fmt.Sprintf(
 		`env: %s,

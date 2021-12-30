@@ -238,7 +238,8 @@ func (s *Spread) processOldSession(
 
 	sessCtx, cancel := context.WithCancel(ctx)
 
-	if sess.GetActiveSellOrderID() != 0 {
+	switch {
+	case sess.GetActiveSellOrderID() != 0:
 		order := s.storage.GetUserOrder(sess.GetActiveSellOrderID())
 		if order == nil {
 			err := s.updateOrderStateByID(ctx, interrupt, sess.GetActiveSellOrderID())
@@ -257,7 +258,7 @@ func (s *Spread) processOldSession(
 		}
 
 		go s.watchOrder(ctx, interrupt, sess, sess.GetActiveSellOrderID())
-	} else if sess.GetActiveBuyOrderID() != 0 {
+	case sess.GetActiveBuyOrderID() != 0:
 		order := s.storage.GetUserOrder(sess.GetActiveBuyOrderID())
 		if order == nil {
 			err := s.updateOrderStateByID(ctx, interrupt, sess.GetActiveBuyOrderID())
@@ -276,7 +277,7 @@ func (s *Spread) processOldSession(
 		}
 
 		go s.watchOrder(ctx, interrupt, sess, sess.GetActiveBuyOrderID())
-	} else if sess.GetActiveBuyExtOrderID() != "" {
+	case sess.GetActiveBuyExtOrderID() != "":
 		o, err := s.updateOrderStateByExtID(ctx, interrupt, sess.GetActiveBuyExtOrderID())
 		if err != nil {
 			s.logger.Err(err).
@@ -297,7 +298,7 @@ func (s *Spread) processOldSession(
 		sess.SetActiveBuyOrderRequestID("")
 
 		go s.watchOrder(ctx, interrupt, sess, sess.GetActiveBuyOrderID())
-	} else if sess.GetActiveSellExtOrderID() != "" {
+	case sess.GetActiveSellExtOrderID() != "":
 		o, err := s.updateOrderStateByExtID(ctx, interrupt, sess.GetActiveSellExtOrderID())
 		if err != nil {
 			s.logger.Err(err).
@@ -356,8 +357,8 @@ func (s *Spread) orderCreationDecider(ctx context.Context, sess *storageSpread.S
 		Str("pair", s.pair.GetPairName()).
 		Msg("order creation decider stopped")
 
-	e := s.orderBook.EventBroker.Subscribe()
-	defer s.orderBook.EventBroker.Unsubscribe(e)
+	e := s.orderBook.OrderBookEventBroker.Subscribe()
+	defer s.orderBook.OrderBookEventBroker.Unsubscribe(e)
 
 	for {
 		select {
@@ -711,7 +712,7 @@ func (s *Spread) createBuyOrder(sess *storageSpread.Session) error {
 	}
 
 	sess.SetActiveBuyExtOrderID(extID)
-	sess.SetActiveBuyOrderRequestID(strconv.FormatInt(rid, 10))
+	sess.SetActiveBuyOrderRequestID(strconv.FormatInt(rid, dictionary.DefaultIntBase))
 
 	return nil
 }
@@ -751,7 +752,7 @@ func (s *Spread) createSellOrder(sess *storageSpread.Session) error {
 	}
 
 	sess.SetActiveSellExtOrderID(extID)
-	sess.SetActiveSellOrderRequestID(strconv.FormatInt(rid, 10))
+	sess.SetActiveSellOrderRequestID(strconv.FormatInt(rid, dictionary.DefaultIntBase))
 
 	return nil
 }
@@ -763,10 +764,10 @@ func (s *Spread) watchOrder(ctx context.Context, interrupt chan os.Signal, sess 
 		Int64("oid", orderID).
 		Msg("start watch order process")
 
-	bookEventCh := s.orderBook.EventBroker.Subscribe()
+	bookEventCh := s.orderBook.OrderBookEventBroker.Subscribe()
 	accEventCh := s.accEventBroker.Subscribe()
 
-	defer s.orderBook.EventBroker.Unsubscribe(bookEventCh)
+	defer s.orderBook.OrderBookEventBroker.Unsubscribe(bookEventCh)
 	defer s.accEventBroker.Unsubscribe(accEventCh)
 
 	defer s.logger.Warn().
@@ -916,7 +917,7 @@ func (s *Spread) checkOrderState(
 						Int64("oid", orderID).
 						Msg("expected cancelled state, but got done")
 
-					s.orderBook.EventBroker.Publish(0)
+					s.orderBook.OrderBookEventBroker.Publish(0)
 
 					return false, nil
 				}
@@ -950,9 +951,9 @@ func (s *Spread) checkOrderState(
 
 				sess.SetPrevBuyOrderID(orderID)
 				sess.SetActiveBuyExtOrderID(extID)
-				sess.SetActiveBuyOrderRequestID(strconv.FormatInt(rid, 10))
+				sess.SetActiveBuyOrderRequestID(strconv.FormatInt(rid, dictionary.DefaultIntBase))
 
-				s.orderBook.EventBroker.Publish(0) // don't wait change order book
+				s.orderBook.OrderBookEventBroker.Publish(0) // don't wait change order book
 			} else {
 				err := s.orderSvc.CancelOrder(orderID)
 				if err != nil {
@@ -963,7 +964,7 @@ func (s *Spread) checkOrderState(
 							Int64("oid", orderID).
 							Msg("expected cancelled buy order state, but got done")
 
-						s.orderBook.EventBroker.Publish(0)
+						s.orderBook.OrderBookEventBroker.Publish(0)
 
 						return false, nil
 					}
@@ -975,7 +976,7 @@ func (s *Spread) checkOrderState(
 				sess.SetActiveBuyOrderID(0)
 				sess.SetIsNeedToCreateBuyOrder(true)
 
-				s.orderBook.EventBroker.Publish(0) // don't wait change order book
+				s.orderBook.OrderBookEventBroker.Publish(0) // don't wait change order book
 			}
 
 			return true, nil
@@ -1003,7 +1004,7 @@ func (s *Spread) checkOrderState(
 						Int64("oid", orderID).
 						Msg("expected cancelled sell order state, but got done")
 
-					s.orderBook.EventBroker.Publish(0)
+					s.orderBook.OrderBookEventBroker.Publish(0)
 
 					return false, nil
 				}
@@ -1033,9 +1034,9 @@ func (s *Spread) checkOrderState(
 
 				sess.SetPrevSellOrderID(orderID)
 				sess.SetActiveSellExtOrderID(extID)
-				sess.SetActiveSellOrderRequestID(strconv.FormatInt(rid, 10))
+				sess.SetActiveSellOrderRequestID(strconv.FormatInt(rid, dictionary.DefaultIntBase))
 
-				s.orderBook.EventBroker.Publish(0) // don't wait change order book
+				s.orderBook.OrderBookEventBroker.Publish(0) // don't wait change order book
 			} else {
 				err := s.orderSvc.CancelOrder(orderID)
 				if err != nil {
@@ -1046,7 +1047,7 @@ func (s *Spread) checkOrderState(
 							Int64("oid", orderID).
 							Msg("expected cancelled sell order state, but got done")
 
-						s.orderBook.EventBroker.Publish(0)
+						s.orderBook.OrderBookEventBroker.Publish(0)
 
 						return false, nil
 					}
@@ -1058,7 +1059,7 @@ func (s *Spread) checkOrderState(
 				sess.SetActiveSellOrderID(0)
 				sess.SetIsNeedToCreateSellOrder(true)
 
-				s.orderBook.EventBroker.Publish(0)
+				s.orderBook.OrderBookEventBroker.Publish(0)
 			}
 
 			return true, nil
@@ -1182,7 +1183,7 @@ func (s *Spread) setBuyOrderExecutedFlags(sess *storageSpread.Session, order *st
 	sess.SetBuyOrderExecutedFlags(order.ID, s.sessSvc.GetSessTotalBoughtVolume(sess))
 
 	s.orderBook.SubProfit(s.sessSvc.GetSessTotalBoughtCost(sess))
-	s.orderBook.EventBroker.Publish(0)
+	s.orderBook.OrderBookEventBroker.Publish(0)
 
 	s.tgSvc.Send(fmt.Sprintf(
 		`env: %s,
@@ -1226,7 +1227,7 @@ func (s *Spread) setSellOrderExecutedFlags(sess *storageSpread.Session, order *s
 	sess.SetSellOrderExecutedFlags()
 
 	s.orderBook.AddProfit(s.sessSvc.GetSessTotalSoldCost(sess))
-	s.orderBook.EventBroker.Publish(0)
+	s.orderBook.OrderBookEventBroker.Publish(0)
 
 	soldVolume := s.sessSvc.GetSessTotalSoldVolume(sess)
 	boughtVolume := s.sessSvc.GetSessTotalBoughtVolume(sess)

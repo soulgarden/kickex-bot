@@ -79,7 +79,7 @@ var buyCmd = &cobra.Command{
 
 			<-time.After(ShutDownDuration)
 
-			logger.Warn().Msg("killed by shutdown timeout")
+			logger.Error().Msg("killed by shutdown timeout")
 
 			os.Exit(1)
 		}()
@@ -111,14 +111,7 @@ var buyCmd = &cobra.Command{
 		go pairs.Start(ctx, interrupt, &wg)
 
 		for {
-			pairsNum := len(cfg.Buy.Pairs)
-			for _, pairName := range cfg.Buy.Pairs {
-				if st.GetPair(pairName) != nil {
-					pairsNum--
-				}
-			}
-
-			if pairsNum == 0 {
+			if st.GetPair(cfg.Spread.Pair) != nil {
 				break
 			}
 
@@ -128,47 +121,41 @@ var buyCmd = &cobra.Command{
 		wg.Add(1)
 		go accounting.Start(ctx, interrupt, &wg)
 
-		for _, pairName := range cfg.Buy.Pairs {
-			pair := st.GetPair(pairName)
-			if pair == nil {
-				logger.
-					Err(dictionary.ErrInvalidPair).
-					Str("pair", pairName).
-					Msg(dictionary.ErrInvalidPair.Error())
+		pair := st.GetPair(cfg.Buy.Pair)
+		if pair == nil {
+			logger.
+				Err(dictionary.ErrInvalidPair).
+				Str("pair", cfg.Buy.Pair).
+				Msg(dictionary.ErrInvalidPair.Error())
 
-				cancel()
+			cancel()
+		}
 
-				break
-			}
+		orderBookEventBroker := broker.New(&logger)
+		go orderBookEventBroker.Start()
 
-			orderBookEventBroker := broker.New(&logger)
-			go orderBookEventBroker.Start()
+		orderBook := st.RegisterOrderBook(pair, orderBookEventBroker)
 
-			orderBook := st.RegisterOrderBook(pair, orderBookEventBroker)
+		wg.Add(1)
+		go subscriber.NewOrderBook(cfg, st, wsEventBroker, wsSvc, pair, orderBook, &logger).Start(ctx, &wg, interrupt)
 
-			wg.Add(1)
-			go subscriber.NewOrderBook(cfg, st, wsEventBroker, wsSvc, pair, orderBook, &logger).Start(ctx, &wg, interrupt)
-
-			buyStrategy, err := strategy.NewBuy(
-				cfg,
-				st,
-				wsEventBroker,
-				accEventBroker,
-				service.NewConversion(st, &logger),
-				tgSvc,
-				wsSvc,
-				pair,
-				orderBook,
-				orderSvc,
-				sessSvc,
-				&logger,
-			)
-			if err != nil {
-				cancel()
-
-				break
-			}
-
+		buyStrategy, err := strategy.NewBuy(
+			cfg,
+			st,
+			wsEventBroker,
+			accEventBroker,
+			service.NewConversion(st, &logger),
+			tgSvc,
+			wsSvc,
+			pair,
+			orderBook,
+			orderSvc,
+			sessSvc,
+			&logger,
+		)
+		if err != nil {
+			cancel()
+		} else {
 			wg.Add(1)
 			go buyStrategy.Start(ctx, &wg, interrupt)
 		}

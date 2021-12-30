@@ -15,6 +15,12 @@ Implemented 3 strategies:
 
 To run in docker swarm 
 
-* Review ./docker-compose-swarm.yml and enable/disable strategies
+* Review ./docker-compose-swarm.yml and enable/disable required strategies
 * Run `docker swarm init`
 * Run `make deploy_swarm`
+
+#### Arbitrage bot architecture
+
+![](./arbitrage_architecture.png)
+
+
