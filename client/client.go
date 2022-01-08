@@ -44,7 +44,7 @@ type Msg struct {
 	Payload []byte
 }
 
-func (c *Client) read(interrupt chan os.Signal) {
+func (c *Client) read(interrupt chan<- os.Signal) {
 	for {
 		c.conn.SetReadLimit(eventSize)
 
@@ -52,7 +52,7 @@ func (c *Client) read(interrupt chan os.Signal) {
 		if err != nil {
 			c.logger.Err(err).Msg("set read deadline")
 
-			interrupt <- syscall.SIGSTOP
+			interrupt <- syscall.SIGINT
 		}
 
 		c.conn.SetPongHandler(func(string) error {
@@ -60,7 +60,7 @@ func (c *Client) read(interrupt chan os.Signal) {
 			if err != nil {
 				c.logger.Err(err).Msg("set read deadline")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 			}
 
 			return nil
@@ -80,7 +80,7 @@ func (c *Client) read(interrupt chan os.Signal) {
 			) {
 				c.logger.Warn().Err(err).Msg("unexpected close error")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 			} else if !websocket.IsCloseError(
 				err,
 				websocket.CloseGoingAway,
@@ -88,7 +88,7 @@ func (c *Client) read(interrupt chan os.Signal) {
 			) {
 				c.logger.Err(err).Msg("got error")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 			}
 
 			return
@@ -102,7 +102,7 @@ func (c *Client) read(interrupt chan os.Signal) {
 	}
 }
 
-func (c *Client) write(interrupt chan os.Signal) {
+func (c *Client) write(interrupt chan<- os.Signal) {
 	for {
 		msg, ok := <-c.sendCh
 
@@ -126,7 +126,7 @@ func (c *Client) write(interrupt chan os.Signal) {
 					Bytes("body", msg.Payload).
 					Msg("ping failed, interrupt")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 			}
 		}
 	}
@@ -384,7 +384,7 @@ func newConnection(cfg *conf.Bot, logger *zerolog.Logger) (*Client, error) {
 	return cli, err
 }
 
-func NewWsCli(cfg *conf.Bot, interrupt chan os.Signal, logger *zerolog.Logger) (*Client, error) {
+func NewWsCli(cfg *conf.Bot, interrupt chan<- os.Signal, logger *zerolog.Logger) (*Client, error) {
 	cli, err := newConnection(
 		cfg,
 		logger,

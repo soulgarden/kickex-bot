@@ -43,15 +43,15 @@ func NewBalance(
 	}
 }
 
-func (s *Balance) GetBalance(ctx context.Context, interrupt chan os.Signal) error {
-	eventsCh := s.eventBroker.Subscribe()
+func (s *Balance) GetBalance(ctx context.Context, interrupt chan<- os.Signal) error {
+	eventsCh := s.eventBroker.Subscribe("get balance")
 	defer s.eventBroker.Unsubscribe(eventsCh)
 
 	id, err := s.wsSvc.GetBalance()
 	if err != nil {
 		s.logger.Warn().Msg("get balance")
 
-		interrupt <- syscall.SIGSTOP
+		interrupt <- syscall.SIGINT
 
 		return err
 	}
@@ -62,7 +62,7 @@ func (s *Balance) GetBalance(ctx context.Context, interrupt chan os.Signal) erro
 			if !ok {
 				s.logger.Warn().Msg("event channel closed")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return nil
 			}
@@ -71,7 +71,7 @@ func (s *Balance) GetBalance(ctx context.Context, interrupt chan os.Signal) erro
 			if !ok {
 				s.logger.Err(dictionary.ErrCantConvertInterfaceToBytes).Msg(dictionary.ErrCantConvertInterfaceToBytes.Error())
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return dictionary.ErrCantConvertInterfaceToBytes
 			}
@@ -82,7 +82,7 @@ func (s *Balance) GetBalance(ctx context.Context, interrupt chan os.Signal) erro
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return err
 			}
@@ -99,7 +99,7 @@ func (s *Balance) GetBalance(ctx context.Context, interrupt chan os.Signal) erro
 			if err != nil {
 				s.logger.Err(err).Msg("check error response")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return err
 			}
@@ -110,7 +110,7 @@ func (s *Balance) GetBalance(ctx context.Context, interrupt chan os.Signal) erro
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return err
 			}
@@ -119,7 +119,7 @@ func (s *Balance) GetBalance(ctx context.Context, interrupt chan os.Signal) erro
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return err
 			}
@@ -183,7 +183,7 @@ func (s *Balance) WaitForSufficientBalance(ctx context.Context, pair string, amo
 		return nil
 	}
 
-	accEventCh := s.accEventBroker.Subscribe()
+	accEventCh := s.accEventBroker.Subscribe("wait for sufficient balance")
 
 	defer s.accEventBroker.Unsubscribe(accEventCh)
 

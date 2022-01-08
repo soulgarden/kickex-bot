@@ -39,11 +39,11 @@ func NewOrder(
 	return &Order{cfg: cfg, storage: storage, wsEventBroker: wsEventBroker, wsSvc: wsSvc, logger: logger}
 }
 
-func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan os.Signal) error {
+func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan<- os.Signal) error {
 	s.logger.Warn().Msg("order states updater starting...")
 	defer s.logger.Warn().Msg("order states updater stopped")
 
-	eventsCh := s.wsEventBroker.Subscribe()
+	eventsCh := s.wsEventBroker.Subscribe("update order states")
 	defer s.wsEventBroker.Unsubscribe(eventsCh)
 
 	oNumberProcessed := 0
@@ -59,7 +59,7 @@ func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan os.Signal
 		if err != nil {
 			s.logger.Err(err).Msg("get order")
 
-			interrupt <- syscall.SIGSTOP
+			interrupt <- syscall.SIGINT
 
 			return err
 		}
@@ -75,7 +75,7 @@ func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan os.Signal
 			if !ok {
 				s.logger.Warn().Msg("event channel closed")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return nil
 			}
@@ -84,7 +84,7 @@ func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan os.Signal
 			if !ok {
 				s.logger.Err(dictionary.ErrCantConvertInterfaceToBytes).Msg(dictionary.ErrCantConvertInterfaceToBytes.Error())
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return dictionary.ErrCantConvertInterfaceToBytes
 			}
@@ -95,7 +95,7 @@ func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan os.Signal
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return err
 			}
@@ -108,7 +108,7 @@ func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan os.Signal
 			if err != nil {
 				s.logger.Err(err).Msg("process order msg")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return err
 			}
@@ -129,8 +129,8 @@ func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan os.Signal
 	}
 }
 
-func (s *Order) UpdateOrderState(ctx context.Context, interrupt chan os.Signal, rid int64) (*storage.Order, error) {
-	eventsCh := s.wsEventBroker.Subscribe()
+func (s *Order) UpdateOrderState(ctx context.Context, interrupt chan<- os.Signal, rid int64) (*storage.Order, error) {
+	eventsCh := s.wsEventBroker.Subscribe("update order state")
 	defer s.wsEventBroker.Unsubscribe(eventsCh)
 
 	for {
@@ -139,7 +139,7 @@ func (s *Order) UpdateOrderState(ctx context.Context, interrupt chan os.Signal, 
 			if !ok {
 				s.logger.Warn().Msg("event channel closed")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return nil, nil
 			}
@@ -148,7 +148,7 @@ func (s *Order) UpdateOrderState(ctx context.Context, interrupt chan os.Signal, 
 			if !ok {
 				s.logger.Err(dictionary.ErrCantConvertInterfaceToBytes).Msg(dictionary.ErrCantConvertInterfaceToBytes.Error())
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return nil, dictionary.ErrCantConvertInterfaceToBytes
 			}
@@ -159,7 +159,7 @@ func (s *Order) UpdateOrderState(ctx context.Context, interrupt chan os.Signal, 
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return nil, nil
 			}
@@ -172,7 +172,7 @@ func (s *Order) UpdateOrderState(ctx context.Context, interrupt chan os.Signal, 
 			if err != nil {
 				s.logger.Err(err).Msg("process order msg")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return nil, err
 			}
@@ -248,7 +248,7 @@ func (s *Order) processOrderMsg(msg []byte) (*storage.Order, error) {
 }
 
 func (s *Order) CancelOrder(orderID int64) error {
-	eventsCh := s.wsEventBroker.Subscribe()
+	eventsCh := s.wsEventBroker.Subscribe("cancel order")
 	defer s.wsEventBroker.Unsubscribe(eventsCh)
 
 	id, err := s.wsSvc.CancelOrder(orderID)

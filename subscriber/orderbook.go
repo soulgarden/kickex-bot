@@ -51,7 +51,7 @@ func NewOrderBook(
 	}
 }
 
-func (s *OrderBook) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan os.Signal) {
+func (s *OrderBook) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan<- os.Signal) {
 	defer func() {
 		wg.Done()
 	}()
@@ -59,14 +59,14 @@ func (s *OrderBook) Start(ctx context.Context, wg *sync.WaitGroup, interrupt cha
 	s.logger.Warn().Str("pair", s.pair.GetPairName()).Msg("order book subscriber starting...")
 	defer s.logger.Warn().Str("pair", s.pair.GetPairName()).Msg("order book subscriber stopped")
 
-	eventsCh := s.eventBroker.Subscribe()
+	eventsCh := s.eventBroker.Subscribe("order book subscriber")
 	defer s.eventBroker.Unsubscribe(eventsCh)
 
 	id, err := s.wsSvc.GetOrderBookAndSubscribe(s.pair.BaseCurrency + "/" + s.pair.QuoteCurrency)
 	if err != nil {
 		s.logger.Err(err).Msg("get order book and subscribe")
 
-		interrupt <- syscall.SIGSTOP
+		interrupt <- syscall.SIGINT
 
 		return
 	}
@@ -77,7 +77,7 @@ func (s *OrderBook) Start(ctx context.Context, wg *sync.WaitGroup, interrupt cha
 			if !ok {
 				s.logger.Warn().Msg("event channel closed")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}
@@ -86,7 +86,7 @@ func (s *OrderBook) Start(ctx context.Context, wg *sync.WaitGroup, interrupt cha
 			if !ok {
 				s.logger.Err(dictionary.ErrCantConvertInterfaceToBytes).Msg(dictionary.ErrCantConvertInterfaceToBytes.Error())
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}
@@ -97,7 +97,7 @@ func (s *OrderBook) Start(ctx context.Context, wg *sync.WaitGroup, interrupt cha
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}
@@ -114,7 +114,7 @@ func (s *OrderBook) Start(ctx context.Context, wg *sync.WaitGroup, interrupt cha
 			if err != nil {
 				s.logger.Err(err).Msg("check error response")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}
@@ -123,7 +123,7 @@ func (s *OrderBook) Start(ctx context.Context, wg *sync.WaitGroup, interrupt cha
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}
@@ -134,7 +134,7 @@ func (s *OrderBook) Start(ctx context.Context, wg *sync.WaitGroup, interrupt cha
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("update max bid price")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}
@@ -143,7 +143,7 @@ func (s *OrderBook) Start(ctx context.Context, wg *sync.WaitGroup, interrupt cha
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("update min ask price")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}

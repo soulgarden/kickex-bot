@@ -22,14 +22,14 @@ func NewWS(cfg *conf.Bot, eventBroker *broker.Broker, logger *zerolog.Logger) *W
 	return &WS{cfg: cfg, eventBroker: eventBroker, logger: logger}
 }
 
-func (s *WS) Connect(interrupt chan os.Signal) error {
+func (s *WS) Connect(interrupt chan<- os.Signal) error {
 	var err error
 
 	s.cli, err = client.NewWsCli(s.cfg, interrupt, s.logger)
 	if err != nil {
 		s.logger.Err(err).Msg("connection error")
 
-		interrupt <- syscall.SIGSTOP
+		interrupt <- syscall.SIGINT
 
 		return err
 	}
@@ -38,7 +38,7 @@ func (s *WS) Connect(interrupt chan os.Signal) error {
 	if err != nil {
 		s.logger.Err(err).Msg("auth error")
 
-		interrupt <- syscall.SIGSTOP
+		interrupt <- syscall.SIGINT
 
 		return err
 	}
@@ -46,7 +46,7 @@ func (s *WS) Connect(interrupt chan os.Signal) error {
 	return nil
 }
 
-func (s *WS) Start(ctx context.Context, interrupt chan os.Signal) {
+func (s *WS) Start(ctx context.Context, interrupt chan<- os.Signal) {
 	var err error
 
 	for {
@@ -55,7 +55,7 @@ func (s *WS) Start(ctx context.Context, interrupt chan os.Signal) {
 			if !ok {
 				s.logger.Err(err).Msg("read channel closed")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}

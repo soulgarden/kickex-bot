@@ -133,7 +133,7 @@ func NewSpread(
 	}, nil
 }
 
-func (s *Spread) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan os.Signal) {
+func (s *Spread) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan<- os.Signal) {
 	defer func() {
 		wg.Done()
 	}()
@@ -184,12 +184,12 @@ func (s *Spread) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan o
 	}
 }
 
-func (s *Spread) CreateSession(ctx context.Context, interrupt chan os.Signal) {
+func (s *Spread) CreateSession(ctx context.Context, interrupt chan<- os.Signal) {
 	volume, err := s.getStartBuyVolume()
 	if err != nil {
 		s.logger.Err(err).Msg("get start buy volume")
 
-		interrupt <- syscall.SIGSTOP
+		interrupt <- syscall.SIGINT
 
 		return
 	}
@@ -214,7 +214,7 @@ func (s *Spread) processOldSession(
 	ctx context.Context,
 	wg *sync.WaitGroup,
 	sess *storageSpread.Session,
-	interrupt chan os.Signal,
+	interrupt chan<- os.Signal,
 ) {
 	s.logger.Warn().
 		Str("id", sess.ID).
@@ -333,20 +333,20 @@ func (s *Spread) processOldSession(
 func (s *Spread) processSession(
 	ctx context.Context,
 	sess *storageSpread.Session,
-	interrupt chan os.Signal,
+	interrupt chan<- os.Signal,
 ) {
 	go func() {
 		if err := s.listenNewOrders(ctx, interrupt, sess); err != nil {
 			s.logger.Err(err).Str("id", sess.ID).Msg("listen new orders")
 
-			interrupt <- syscall.SIGSTOP
+			interrupt <- syscall.SIGINT
 		}
 	}()
 
 	s.orderCreationDecider(ctx, sess, interrupt)
 }
 
-func (s *Spread) orderCreationDecider(ctx context.Context, sess *storageSpread.Session, interrupt chan os.Signal) {
+func (s *Spread) orderCreationDecider(ctx context.Context, sess *storageSpread.Session, interrupt chan<- os.Signal) {
 	s.logger.Warn().
 		Str("id", sess.ID).
 		Str("pair", s.pair.GetPairName()).
@@ -357,7 +357,7 @@ func (s *Spread) orderCreationDecider(ctx context.Context, sess *storageSpread.S
 		Str("pair", s.pair.GetPairName()).
 		Msg("order creation decider stopped")
 
-	e := s.orderBook.OrderBookEventBroker.Subscribe()
+	e := s.orderBook.OrderBookEventBroker.Subscribe("order creation decider")
 	defer s.orderBook.OrderBookEventBroker.Unsubscribe(e)
 
 	for {
@@ -481,7 +481,7 @@ allow to create new session after 1h of inability to create an order`,
 
 func (s *Spread) listenNewOrders(
 	ctx context.Context,
-	interrupt chan os.Signal,
+	interrupt chan<- os.Signal,
 	sess *storageSpread.Session,
 ) error {
 	s.logger.Warn().
@@ -494,7 +494,7 @@ func (s *Spread) listenNewOrders(
 		Str("pair", s.pair.GetPairName()).
 		Msg("listen new orders subscriber stopped")
 
-	eventsCh := s.wsEventBroker.Subscribe()
+	eventsCh := s.wsEventBroker.Subscribe("listen new orders")
 	defer s.wsEventBroker.Unsubscribe(eventsCh)
 
 	var skip bool
@@ -508,7 +508,7 @@ func (s *Spread) listenNewOrders(
 
 			msg, ok := e.([]byte)
 			if !ok {
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return dictionary.ErrCantConvertInterfaceToBytes
 			}
@@ -518,7 +518,7 @@ func (s *Spread) listenNewOrders(
 
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return err
 			}
@@ -757,15 +757,15 @@ func (s *Spread) createSellOrder(sess *storageSpread.Session) error {
 	return nil
 }
 
-func (s *Spread) watchOrder(ctx context.Context, interrupt chan os.Signal, sess *storageSpread.Session, orderID int64) {
+func (s *Spread) watchOrder(ctx context.Context, interrupt chan<- os.Signal, sess *storageSpread.Session, orderID int64) {
 	s.logger.Warn().
 		Str("id", sess.ID).
 		Str("pair", s.pair.GetPairName()).
 		Int64("oid", orderID).
 		Msg("start watch order process")
 
-	bookEventCh := s.orderBook.OrderBookEventBroker.Subscribe()
-	accEventCh := s.accEventBroker.Subscribe()
+	bookEventCh := s.orderBook.OrderBookEventBroker.Subscribe("orderbook watch order")
+	accEventCh := s.accEventBroker.Subscribe("accounting watch order")
 
 	defer s.orderBook.OrderBookEventBroker.Unsubscribe(bookEventCh)
 	defer s.accEventBroker.Unsubscribe(accEventCh)
@@ -784,14 +784,14 @@ func (s *Spread) watchOrder(ctx context.Context, interrupt chan os.Signal, sess 
 			if !ok {
 				s.logger.Err(dictionary.ErrEventChannelClosed).Msg("event channel closed")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}
 
 			hasFinalState, err := s.checkOrderState(ctx, interrupt, orderID, sess, &startedTime)
 			if err != nil {
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}
@@ -802,7 +802,7 @@ func (s *Spread) watchOrder(ctx context.Context, interrupt chan os.Signal, sess 
 		case <-bookEventCh:
 			hasFinalState, err := s.checkOrderState(ctx, interrupt, orderID, sess, &startedTime)
 			if err != nil {
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}
@@ -819,7 +819,7 @@ func (s *Spread) watchOrder(ctx context.Context, interrupt chan os.Signal, sess 
 
 func (s *Spread) checkOrderState(
 	ctx context.Context,
-	interrupt chan os.Signal,
+	interrupt chan<- os.Signal,
 	orderID int64,
 	sess *storageSpread.Session,
 	startedTime *time.Time,
@@ -1379,7 +1379,7 @@ func (s *Spread) isMoveSellOrderRequired(sess *storageSpread.Session, o *storage
 	return true
 }
 
-func (s *Spread) updateOrderStateByID(ctx context.Context, interrupt chan os.Signal, oid int64) error {
+func (s *Spread) updateOrderStateByID(ctx context.Context, interrupt chan<- os.Signal, oid int64) error {
 	rid, err := s.wsSvc.GetOrder(oid)
 	if err != nil {
 		s.logger.Err(err).Int64("oid", oid).Msg("send get order by id request")
@@ -1401,7 +1401,7 @@ func (s *Spread) updateOrderStateByID(ctx context.Context, interrupt chan os.Sig
 
 func (s *Spread) updateOrderStateByExtID(
 	ctx context.Context,
-	interrupt chan os.Signal,
+	interrupt chan<- os.Signal,
 	extID string,
 ) (*storage.Order, error) {
 	rid, err := s.wsSvc.GetOrderByExtID(extID)

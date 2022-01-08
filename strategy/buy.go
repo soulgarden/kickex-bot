@@ -114,7 +114,7 @@ func NewBuy(
 	}, nil
 }
 
-func (s *Buy) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan os.Signal) {
+func (s *Buy) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan<- os.Signal) {
 	defer func() {
 		wg.Done()
 	}()
@@ -140,12 +140,12 @@ func (s *Buy) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan os.S
 	}
 }
 
-func (s *Buy) CreateSession(ctx context.Context, interrupt chan os.Signal) {
+func (s *Buy) CreateSession(ctx context.Context, interrupt chan<- os.Signal) {
 	volume, err := s.getStartBuyVolume()
 	if err != nil {
 		s.logger.Err(err).Msg("get start buy volume")
 
-		interrupt <- syscall.SIGSTOP
+		interrupt <- syscall.SIGINT
 
 		return
 	}
@@ -169,20 +169,20 @@ func (s *Buy) CreateSession(ctx context.Context, interrupt chan os.Signal) {
 func (s *Buy) processSession(
 	ctx context.Context,
 	sess *buy.Session,
-	interrupt chan os.Signal,
+	interrupt chan<- os.Signal,
 ) {
 	go func() {
 		if err := s.listenNewOrders(ctx, interrupt, sess); err != nil {
 			s.logger.Err(err).Str("id", sess.ID).Msg("listen new orders")
 
-			interrupt <- syscall.SIGSTOP
+			interrupt <- syscall.SIGINT
 		}
 	}()
 
 	s.orderCreationDecider(ctx, sess, interrupt)
 }
 
-func (s *Buy) orderCreationDecider(ctx context.Context, sess *buy.Session, interrupt chan os.Signal) {
+func (s *Buy) orderCreationDecider(ctx context.Context, sess *buy.Session, interrupt chan<- os.Signal) {
 	s.logger.Warn().
 		Str("id", sess.ID).
 		Str("pair", s.pair.GetPairName()).
@@ -193,7 +193,7 @@ func (s *Buy) orderCreationDecider(ctx context.Context, sess *buy.Session, inter
 		Str("pair", s.pair.GetPairName()).
 		Msg("order creation decider stopped")
 
-	e := s.orderBook.OrderBookEventBroker.Subscribe()
+	e := s.orderBook.OrderBookEventBroker.Subscribe("order creation decider")
 	defer s.orderBook.OrderBookEventBroker.Unsubscribe(e)
 
 	for {
@@ -250,7 +250,7 @@ func (s *Buy) isBuyOrderCreationAvailable(sess *buy.Session, force bool) bool {
 
 func (s *Buy) listenNewOrders(
 	ctx context.Context,
-	interrupt chan os.Signal,
+	interrupt chan<- os.Signal,
 	sess *buy.Session,
 ) error {
 	s.logger.Warn().
@@ -263,7 +263,7 @@ func (s *Buy) listenNewOrders(
 		Str("pair", s.pair.GetPairName()).
 		Msg("listen new orders subscriber stopped")
 
-	eventsCh := s.wsEventBroker.Subscribe()
+	eventsCh := s.wsEventBroker.Subscribe("listen new orders")
 	defer s.wsEventBroker.Unsubscribe(eventsCh)
 
 	var skip bool
@@ -277,7 +277,7 @@ func (s *Buy) listenNewOrders(
 
 			msg, ok := e.([]byte)
 			if !ok {
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return dictionary.ErrCantConvertInterfaceToBytes
 			}
@@ -287,7 +287,7 @@ func (s *Buy) listenNewOrders(
 
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return err
 			}
@@ -442,18 +442,18 @@ func (s *Buy) createBuyOrder(sess *buy.Session) error {
 	return nil
 }
 
-func (s *Buy) watchOrder(ctx context.Context, interrupt chan os.Signal, sess *buy.Session, orderID int64) {
+func (s *Buy) watchOrder(ctx context.Context, interrupt chan<- os.Signal, sess *buy.Session, orderID int64) {
 	s.logger.Warn().
 		Str("id", sess.ID).
 		Str("pair", s.pair.GetPairName()).
 		Int64("oid", orderID).
 		Msg("start watch order process")
 
-	bookEventCh := s.orderBook.OrderBookEventBroker.Subscribe()
+	bookEventCh := s.orderBook.OrderBookEventBroker.Subscribe("watch order")
 
 	defer s.orderBook.OrderBookEventBroker.Unsubscribe(bookEventCh)
 
-	accEventCh := s.accEventBroker.Subscribe()
+	accEventCh := s.accEventBroker.Subscribe("watch order")
 
 	defer s.accEventBroker.Unsubscribe(accEventCh)
 
@@ -471,14 +471,14 @@ func (s *Buy) watchOrder(ctx context.Context, interrupt chan os.Signal, sess *bu
 			if !ok {
 				s.logger.Err(dictionary.ErrEventChannelClosed).Msg("event channel closed")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}
 
 			hasFinalState, err := s.checkOrderState(ctx, interrupt, orderID, sess, &startedTime)
 			if err != nil {
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}
@@ -489,7 +489,7 @@ func (s *Buy) watchOrder(ctx context.Context, interrupt chan os.Signal, sess *bu
 		case <-bookEventCh:
 			hasFinalState, err := s.checkOrderState(ctx, interrupt, orderID, sess, &startedTime)
 			if err != nil {
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}
@@ -506,7 +506,7 @@ func (s *Buy) watchOrder(ctx context.Context, interrupt chan os.Signal, sess *bu
 
 func (s *Buy) checkOrderState(
 	ctx context.Context,
-	interrupt chan os.Signal,
+	interrupt chan<- os.Signal,
 	orderID int64,
 	sess *buy.Session,
 	startedTime *time.Time,
@@ -843,7 +843,7 @@ func (s *Buy) isMoveBuyOrderRequired(sess *buy.Session, o *storage.Order) bool {
 	return true
 }
 
-func (s *Buy) updateOrderStateByID(ctx context.Context, interrupt chan os.Signal, oid int64) error {
+func (s *Buy) updateOrderStateByID(ctx context.Context, interrupt chan<- os.Signal, oid int64) error {
 	rid, err := s.wsSvc.GetOrder(oid)
 	if err != nil {
 		s.logger.Err(err).Int64("oid", oid).Msg("send get order by id request")

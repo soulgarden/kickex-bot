@@ -1,11 +1,10 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
-	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	spreadSessSvc "github.com/soulgarden/kickex-bot/service/spread"
@@ -26,9 +25,8 @@ import (
 )
 
 const (
-	ShutDownDuration = time.Second * 15
-	cleanupInterval  = time.Minute * 10
-	interruptChSize  = 100
+	cleanupInterval = time.Minute * 10
+	interruptChSize = 100
 )
 
 //nolint: gochecknoglobals
@@ -53,18 +51,15 @@ var spreadCmd = &cobra.Command{
 		balanceSvc := service.NewBalance(st, wsEventBroker, accEventBroker, wsSvc, &logger)
 		sessSvc := spreadSessSvc.New(st)
 
-		interrupt := make(chan os.Signal, interruptChSize)
-		signal.Notify(interrupt, os.Interrupt)
+		cmdManager := service.NewManager(&logger)
 
-		ctx, cancel := context.WithCancel(context.Background())
-
-		logger.Warn().Msg("starting...")
+		ctx, interrupt := cmdManager.ListenSignal()
 
 		tgSvc, err := service.NewTelegram(cfg, &logger)
 		if err != nil {
 			logger.Err(err).Msg("new tg")
 
-			cancel()
+			interrupt <- syscall.SIGINT
 
 			return
 		}
@@ -73,20 +68,6 @@ var spreadCmd = &cobra.Command{
 
 		tgSvc.Send(fmt.Sprintf("env: %s, spread trading bot starting", cfg.Env))
 		defer tgSvc.SendSync(fmt.Sprintf("env: %s, spread trading bot shutting down", cfg.Env))
-
-		go func() {
-			<-interrupt
-
-			logger.Warn().Msg("interrupt signal received")
-
-			cancel()
-
-			<-time.After(ShutDownDuration)
-
-			logger.Error().Msg("killed by shutdown timeout")
-
-			os.Exit(1)
-		}()
 
 		err = wsSvc.Connect(interrupt)
 		if err != nil {
@@ -158,7 +139,7 @@ var spreadCmd = &cobra.Command{
 				Str("pair", cfg.Spread.Pair).
 				Msg(dictionary.ErrInvalidPair.Error())
 
-			cancel()
+			interrupt <- syscall.SIGINT
 		}
 
 		orderBookEventBroker := broker.New(&logger)
@@ -184,7 +165,7 @@ var spreadCmd = &cobra.Command{
 			&logger,
 		)
 		if err != nil {
-			cancel()
+			interrupt <- syscall.SIGINT
 		} else {
 			wg.Add(1)
 			go spreadTrader.Start(ctx, &wg, interrupt)
@@ -194,7 +175,7 @@ var spreadCmd = &cobra.Command{
 			for {
 				select {
 				case <-time.After(cleanupInterval):
-					logger.Info().Msg("run cleanup old orders")
+					logger.Debug().Msg("run cleanup old orders")
 
 					st.CleanUpOldOrders()
 				case <-ctx.Done():
@@ -210,7 +191,5 @@ var spreadCmd = &cobra.Command{
 		d := storage.NewDumpStorage(st)
 		err = d.DumpStorage(fmt.Sprintf(cfg.StorageDumpPath, cfg.Env))
 		logger.Err(err).Msg("dump sessions to file")
-
-		logger.Warn().Msg("shutting down...")
 	},
 }

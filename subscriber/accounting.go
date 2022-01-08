@@ -52,7 +52,7 @@ func NewAccounting(
 	}
 }
 
-func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal, wg *sync.WaitGroup) {
+func (s *Accounting) Start(ctx context.Context, interrupt chan<- os.Signal, wg *sync.WaitGroup) {
 	defer func() {
 		wg.Done()
 	}()
@@ -60,13 +60,13 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal, wg *sy
 	s.logger.Warn().Msg("accounting subscriber starting...")
 	defer s.logger.Warn().Msg("accounting subscriber stopped")
 
-	eventsCh := s.wsEventBroker.Subscribe()
+	eventsCh := s.wsEventBroker.Subscribe("accounting subscriber")
 	defer s.wsEventBroker.Unsubscribe(eventsCh)
 
 	id, err := s.wsSvc.SubscribeAccounting(false)
 	if err != nil {
 		s.logger.Err(err).Msg("subscribe accounting")
-		interrupt <- syscall.SIGSTOP
+		interrupt <- syscall.SIGINT
 
 		return
 	}
@@ -77,7 +77,7 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal, wg *sy
 			if !ok {
 				s.logger.Warn().Msg("event channel closed")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}
@@ -86,7 +86,7 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal, wg *sy
 			if !ok {
 				s.logger.Err(dictionary.ErrCantConvertInterfaceToBytes).Msg(dictionary.ErrCantConvertInterfaceToBytes.Error())
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}
@@ -97,7 +97,7 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal, wg *sy
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}
@@ -114,7 +114,7 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal, wg *sy
 			if err != nil {
 				s.logger.Err(err).Msg("check error response")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}
@@ -125,7 +125,7 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal, wg *sy
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}
@@ -135,7 +135,7 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal, wg *sy
 				if err != nil {
 					s.logger.Err(err).Msg("new order by response")
 
-					interrupt <- syscall.SIGSTOP
+					interrupt <- syscall.SIGINT
 
 					return
 				}
@@ -153,7 +153,7 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal, wg *sy
 			if err != nil {
 				s.logger.Err(err).Msg("update storage balances")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}
@@ -161,7 +161,7 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan os.Signal, wg *sy
 			s.storage.AppendDeals(r.Deals...)
 			s.accEventBroker.Publish(true)
 		case <-ctx.Done():
-			interrupt <- syscall.SIGSTOP
+			interrupt <- syscall.SIGINT
 
 			return
 		}

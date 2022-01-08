@@ -38,7 +38,7 @@ func NewPairs(
 	return &Pairs{cfg: cfg, storage: storage, eventBroker: eventBroker, wsSvc: wsSvc, logger: logger}
 }
 
-func (s *Pairs) Start(ctx context.Context, interrupt chan os.Signal, wg *sync.WaitGroup) {
+func (s *Pairs) Start(ctx context.Context, interrupt chan<- os.Signal, wg *sync.WaitGroup) {
 	defer func() {
 		wg.Done()
 	}()
@@ -46,14 +46,14 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan os.Signal, wg *sync.Wa
 	s.logger.Warn().Msg("pairs subscriber starting...")
 	defer s.logger.Warn().Msg("pairs subscriber stopped")
 
-	eventsCh := s.eventBroker.Subscribe()
+	eventsCh := s.eventBroker.Subscribe("pair subscriber")
 	defer s.eventBroker.Unsubscribe(eventsCh)
 
 	id, err := s.wsSvc.GetPairsAndSubscribe()
 	if err != nil {
 		s.logger.Err(err).Msg("get pairs and subscribe")
 
-		interrupt <- syscall.SIGSTOP
+		interrupt <- syscall.SIGINT
 
 		return
 	}
@@ -64,7 +64,7 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan os.Signal, wg *sync.Wa
 			if !ok {
 				s.logger.Warn().Msg("event channel closed")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}
@@ -73,7 +73,7 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan os.Signal, wg *sync.Wa
 			if !ok {
 				s.logger.Err(dictionary.ErrCantConvertInterfaceToBytes).Msg(dictionary.ErrCantConvertInterfaceToBytes.Error())
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}
@@ -84,7 +84,7 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan os.Signal, wg *sync.Wa
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}
@@ -97,7 +97,7 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan os.Signal, wg *sync.Wa
 			if err != nil {
 				s.logger.Err(err).Msg("check error response")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}
@@ -108,7 +108,7 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan os.Signal, wg *sync.Wa
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}
@@ -138,7 +138,7 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan os.Signal, wg *sync.Wa
 						Str("val", pair.MinVolume).
 						Msg("parse string as float")
 
-					interrupt <- syscall.SIGSTOP
+					interrupt <- syscall.SIGINT
 
 					return
 				}
@@ -151,7 +151,7 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan os.Signal, wg *sync.Wa
 			s.storage.UpdatePairs(pairs)
 
 		case <-ctx.Done():
-			interrupt <- syscall.SIGSTOP
+			interrupt <- syscall.SIGINT
 
 			return
 		}

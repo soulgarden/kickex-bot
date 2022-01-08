@@ -43,6 +43,7 @@ type Arbitrage struct {
 	sessSvc        *spreadSvc.Session
 	balanceSvc     *service.Balance
 	sentAt         *time.Time
+	totalBuyInUSDT *big.Float
 	logger         *zerolog.Logger
 }
 
@@ -58,7 +59,17 @@ func NewArbitrage(
 	sessSvc *spreadSvc.Session,
 	balanceSvc *service.Balance,
 	logger *zerolog.Logger,
-) *Arbitrage {
+) (*Arbitrage, error) {
+	totalBuyInUSDT, ok := big.NewFloat(0).SetString(cfg.Arbitrage.TotalBuyInUSDT)
+	if !ok {
+		logger.
+			Err(dictionary.ErrParseFloat).
+			Str("val", cfg.Arbitrage.TotalBuyInUSDT).
+			Msg("parse string as float")
+
+		return nil, dictionary.ErrParseFloat
+	}
+
 	return &Arbitrage{
 		cfg:            cfg,
 		storage:        storage,
@@ -70,11 +81,12 @@ func NewArbitrage(
 		orderSvc:       orderSvc,
 		sessSvc:        sessSvc,
 		balanceSvc:     balanceSvc,
+		totalBuyInUSDT: totalBuyInUSDT,
 		logger:         logger,
-	}
+	}, nil
 }
 
-func (s *Arbitrage) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan os.Signal) {
+func (s *Arbitrage) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan<- os.Signal) {
 	defer wg.Done()
 
 	s.logger.Warn().Msg("arbitrage process started")
@@ -92,7 +104,7 @@ func (s *Arbitrage) Start(ctx context.Context, wg *sync.WaitGroup, interrupt cha
 			if !ok {
 				s.logger.Warn().Msg("event channel closed")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}
@@ -105,7 +117,7 @@ func (s *Arbitrage) Start(ctx context.Context, wg *sync.WaitGroup, interrupt cha
 	}
 }
 
-func (s *Arbitrage) collectEvents(ctx context.Context, interrupt chan os.Signal, ch chan<- bool) {
+func (s *Arbitrage) collectEvents(ctx context.Context, interrupt chan<- os.Signal, ch chan<- bool) {
 	var wg sync.WaitGroup
 
 	s.logger.Warn().Msg("start collect events")
@@ -118,25 +130,25 @@ func (s *Arbitrage) collectEvents(ctx context.Context, interrupt chan os.Signal,
 
 		wg.Add(1)
 
-		go s.listenEvents(ctx, &wg, interrupt, pair, ch)
+		go s.listenPairEvents(ctx, &wg, interrupt, pair, ch)
 	}
 
 	wg.Wait()
 }
 
-func (s *Arbitrage) listenEvents(
+func (s *Arbitrage) listenPairEvents(
 	ctx context.Context,
 	wg *sync.WaitGroup,
-	interrupt chan os.Signal,
+	interrupt chan<- os.Signal,
 	pair *storage.Pair,
 	ch chan<- bool,
 ) {
 	defer wg.Done()
 
-	s.logger.Warn().Str("pair", pair.GetPairName()).Msg("start listen events")
-	defer s.logger.Warn().Str("pair", pair.GetPairName()).Msg("finish listen events")
+	s.logger.Warn().Str("pair", pair.GetPairName()).Msg("start listen pair events")
+	defer s.logger.Warn().Str("pair", pair.GetPairName()).Msg("finish listen pair events")
 
-	e := s.storage.GetOrderBook(pair.BaseCurrency, pair.QuoteCurrency).OrderBookEventBroker.Subscribe()
+	e := s.storage.GetOrderBook(pair.BaseCurrency, pair.QuoteCurrency).OrderBookEventBroker.Subscribe("listen events")
 	defer s.storage.GetOrderBook(pair.BaseCurrency, pair.QuoteCurrency).OrderBookEventBroker.Unsubscribe(e)
 
 	for {
@@ -145,7 +157,7 @@ func (s *Arbitrage) listenEvents(
 			if !ok {
 				s.logger.Warn().Msg("receive event error")
 
-				interrupt <- syscall.SIGSTOP
+				interrupt <- syscall.SIGINT
 
 				return
 			}
@@ -241,17 +253,7 @@ func (s *Arbitrage) checkBuyBaseOption(
 		Str("quoted sell order total", quotedSellOrder.Total.String()).
 		Msg("option 1 info")
 
-	zeroStep := big.NewFloat(0).Text('f', baseUSDTPair.VolumeScale)
-	volumeStepStr := zeroStep[0:baseUSDTPair.VolumeScale+1] + "1"
-
-	volumeStep, ok := big.NewFloat(0).SetPrec(uint(baseUSDTPair.VolumeScale)).SetString(volumeStepStr)
-	if !ok {
-		s.logger.Err(dictionary.ErrParseFloat).Str("val", volumeStepStr).Msg("parse string as float")
-
-		return dictionary.ErrParseFloat
-	}
-
-	startBuyVolume := big.NewFloat(0).Add(baseUSDTPair.MinVolume, volumeStep)
+	startBuyVolume := s.totalBuyInUSDT
 
 	// option 1 // buy base for usdt / sell base for quoted / sell quoted for usdt
 	if baseBuyOrder.Total.Cmp(startBuyVolume) == 1 &&
@@ -581,7 +583,7 @@ func (s *Arbitrage) sendCreateOrderRequest(
 	price *big.Float,
 	intent int,
 ) (oid int64, err error) {
-	eventsCh := s.wsEventBroker.Subscribe()
+	eventsCh := s.wsEventBroker.Subscribe("send create order request")
 	defer s.wsEventBroker.Unsubscribe(eventsCh)
 
 	//todo: move to order service
@@ -654,7 +656,7 @@ func (s *Arbitrage) watchOrder(
 	orderID int64,
 	pair *storage.Pair,
 ) (isCompleted bool, err error) {
-	accEventCh := s.accEventBroker.Subscribe()
+	accEventCh := s.accEventBroker.Subscribe("watch order")
 
 	defer s.accEventBroker.Unsubscribe(accEventCh)
 

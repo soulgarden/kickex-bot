@@ -1,10 +1,8 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
-	"os/signal"
 	"sync"
 	"syscall"
 	"time"
@@ -48,19 +46,15 @@ var buyCmd = &cobra.Command{
 		balanceSvc := service.NewBalance(st, wsEventBroker, accEventBroker, wsSvc, &logger)
 		sessSvc := buySessSvc.New(st)
 
-		interrupt := make(chan os.Signal, interruptChSize)
-		signal.Notify(interrupt, os.Interrupt)
-		signal.Notify(interrupt, syscall.SIGTERM)
+		cmdManager := service.NewManager(&logger)
 
-		ctx, cancel := context.WithCancel(context.Background())
-
-		logger.Warn().Msg("starting...")
+		ctx, interrupt := cmdManager.ListenSignal()
 
 		tgSvc, err := service.NewTelegram(cfg, &logger)
 		if err != nil {
 			logger.Err(err).Msg("new tg")
 
-			cancel()
+			interrupt <- syscall.SIGINT
 
 			return
 		}
@@ -69,20 +63,6 @@ var buyCmd = &cobra.Command{
 
 		tgSvc.Send(fmt.Sprintf("env: %s, buy bot starting", cfg.Env))
 		defer tgSvc.SendSync(fmt.Sprintf("env: %s, buy bot shutting down", cfg.Env))
-
-		go func() {
-			<-interrupt
-
-			logger.Warn().Msg("interrupt signal received")
-
-			cancel()
-
-			<-time.After(ShutDownDuration)
-
-			logger.Error().Msg("killed by shutdown timeout")
-
-			os.Exit(1)
-		}()
 
 		err = wsSvc.Connect(interrupt)
 		if err != nil {
@@ -128,7 +108,7 @@ var buyCmd = &cobra.Command{
 				Str("pair", cfg.Buy.Pair).
 				Msg(dictionary.ErrInvalidPair.Error())
 
-			cancel()
+			interrupt <- syscall.SIGINT
 		}
 
 		orderBookEventBroker := broker.New(&logger)
@@ -154,7 +134,7 @@ var buyCmd = &cobra.Command{
 			&logger,
 		)
 		if err != nil {
-			cancel()
+			interrupt <- syscall.SIGINT
 		} else {
 			wg.Add(1)
 			go buyStrategy.Start(ctx, &wg, interrupt)
@@ -176,7 +156,5 @@ var buyCmd = &cobra.Command{
 		wg.Wait()
 
 		wsSvc.Close()
-
-		logger.Warn().Msg("shutting down...")
 	},
 }

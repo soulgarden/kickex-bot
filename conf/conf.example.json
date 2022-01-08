@@ -19,7 +19,7 @@
   },
   "arbitrage": {
     "pair": "KICK/ETH",
-    "total_buy_in_usdt": "5"
+    "total_buy_in_usdt": "2"
   },
   "telegram": {
     "token": "",

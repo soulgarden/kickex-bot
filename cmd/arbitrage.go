@@ -1,10 +1,8 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
-	"os/signal"
 	"sync"
 	"syscall"
 	"time"
@@ -49,13 +47,9 @@ var arbitrageCmd = &cobra.Command{
 		orderSvc := service.NewOrder(cfg, st, wsEventBroker, wsSvc, &logger)
 		sessSvc := spreadSessSvc.New(st)
 
-		interrupt := make(chan os.Signal, interruptChSize)
-		signal.Notify(interrupt, os.Interrupt)
-		signal.Notify(interrupt, syscall.SIGTERM)
+		cmdManager := service.NewManager(&logger)
 
-		ctx, cancel := context.WithCancel(context.Background())
-
-		logger.Warn().Msg("starting...")
+		ctx, interrupt := cmdManager.ListenSignal()
 
 		err := wsSvc.Connect(interrupt)
 		if err != nil {
@@ -88,14 +82,14 @@ var arbitrageCmd = &cobra.Command{
 		if err != nil {
 			logger.Err(err).Msg("new tg")
 
-			cancel()
+			interrupt <- syscall.SIGINT
 
 			return
 		}
 
 		go tgSvc.Start()
 
-		arb := strategy.NewArbitrage(
+		arb, err := strategy.NewArbitrage(
 			cfg,
 			st,
 			service.NewConversion(st, &logger),
@@ -108,6 +102,13 @@ var arbitrageCmd = &cobra.Command{
 			balanceSvc,
 			&logger,
 		)
+		if err != nil {
+			logger.Err(err).Msg("new arbitrage")
+
+			interrupt <- syscall.SIGINT
+
+			return
+		}
 
 		pairs := arb.GetPairsList()
 
@@ -127,6 +128,7 @@ var arbitrageCmd = &cobra.Command{
 		}
 
 		tgSvc.Send(fmt.Sprintf("env: %s, arbitrage bot starting", cfg.Env))
+		defer tgSvc.SendSync(fmt.Sprintf("env: %s, arbitrage bot shutting down", cfg.Env))
 
 		wg.Add(1)
 		go accountingSub.Start(ctx, interrupt, &wg)
@@ -139,7 +141,7 @@ var arbitrageCmd = &cobra.Command{
 					Str("pair", pairName).
 					Msg(dictionary.ErrInvalidPair.Error())
 
-				cancel()
+				interrupt <- syscall.SIGINT
 
 				break
 			}
@@ -158,24 +160,8 @@ var arbitrageCmd = &cobra.Command{
 		wg.Add(1)
 		go arb.Start(ctx, &wg, interrupt)
 
-		go func() {
-			<-interrupt
-
-			tgSvc.SendSync(fmt.Sprintf("env: %s, arbitrage bot shutting down", cfg.Env))
-
-			cancel()
-
-			<-time.After(ShutDownDuration)
-
-			logger.Error().Msg("killed by shutdown timeout")
-
-			os.Exit(1)
-		}()
-
 		wg.Wait()
 
 		wsSvc.Close()
-
-		logger.Warn().Msg("shutting down...")
 	},
 }
