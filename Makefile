@@ -5,8 +5,8 @@ fmt:
 	gofmt -w .
 
 build:
-	docker build  . -f ./docker/bot/Dockerfile -t soulgarden/kickex-bot:1.0.60
-	docker push soulgarden/kickex-bot:1.0.60
+	docker build  . -f ./docker/bot/Dockerfile -t soulgarden/kickex-bot:1.0.61
+	docker push soulgarden/kickex-bot:1.0.61
 
 build_fluentd:
 	docker build ./docker/fluentd -t soulgarden/kickex-bot:fluentd

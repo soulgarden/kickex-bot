@@ -7,7 +7,7 @@ image:
     repository: soulgarden/kickex-bot
     pullPolicy: IfNotPresent
     # Overrides the image tag whose default is the chart appVersion.
-    tag: "1.0.60"
+    tag: "1.0.61"
 imagePullSecrets: [ ]
 nameOverride: ""
 fullnameOverride: ""

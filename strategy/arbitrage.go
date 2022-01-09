@@ -28,8 +28,8 @@ import (
 
 const sendInterval = time.Minute
 const spreadForAlert = 1
-const orderExecutionInterval = time.Minute * 5
-const lastStepOrderExecutionInterval = time.Minute * 60
+const orderExecutionDuration = time.Minute * 5
+const lastStepOrderExecutionDuration = time.Minute * 60
 const chSize = 1024
 
 type Arbitrage struct {
@@ -355,7 +355,7 @@ func (s *Arbitrage) buyBaseForUSDT(
 		baseBuyOrderAmount,
 		baseBuyOrder.Price,
 		dictionary.BuyBase,
-		orderExecutionInterval,
+		orderExecutionDuration,
 	)
 	s.logger.Err(err).Str("pair", baseUSDTPair.GetPairName()).Int64("oid", oid).Msg("create order")
 
@@ -401,7 +401,7 @@ func (s *Arbitrage) sellBaseForQuoted(
 		buyBaseOrder.TotalBuyVolume,
 		baseQuotedSellOrder.Price,
 		dictionary.SellBase,
-		orderExecutionInterval,
+		orderExecutionDuration,
 	)
 	s.logger.Err(err).Str("pair", baseQuotedPair.GetPairName()).Int64("oid", oid).Msg("create order")
 
@@ -450,7 +450,7 @@ func (s *Arbitrage) sellQuotedForUSDT(
 		sellVolume,
 		quotedSellOrder.Price,
 		dictionary.SellBase,
-		lastStepOrderExecutionInterval,
+		lastStepOrderExecutionDuration,
 	)
 	s.logger.Err(err).Str("pair", quotedUSDTPair.GetPairName()).Int64("oid", oid).Msg("create order")
 

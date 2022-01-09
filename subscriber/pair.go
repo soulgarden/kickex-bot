@@ -39,9 +39,7 @@ func NewPairs(
 }
 
 func (s *Pairs) Start(ctx context.Context, interrupt chan<- os.Signal, wg *sync.WaitGroup) {
-	defer func() {
-		wg.Done()
-	}()
+	defer wg.Done()
 
 	s.logger.Warn().Msg("pairs subscriber starting...")
 	defer s.logger.Warn().Msg("pairs subscriber stopped")

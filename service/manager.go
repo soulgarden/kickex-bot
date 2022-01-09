@@ -20,7 +20,7 @@ func NewManager(logger *zerolog.Logger) *Manager {
 }
 
 func (s *Manager) ListenSignal() (context.Context, chan<- os.Signal) {
-	interrupt := make(chan os.Signal, 1)
+	interrupt := make(chan os.Signal, dictionary.SignalChLen)
 
 	signal.Notify(interrupt, os.Interrupt)
 	signal.Notify(interrupt, syscall.SIGTERM)
