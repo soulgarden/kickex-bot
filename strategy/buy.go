@@ -734,7 +734,7 @@ func (s *Buy) setBuyOrderExecutedFlags(sess *buy.Session, order *storage.Order) 
 
 	s.orderBook.OrderBookEventBroker.Publish(0)
 
-	s.tgSvc.Send(fmt.Sprintf(
+	s.tgSvc.SendAsync(fmt.Sprintf(
 		`env: %s,
 buy order reached done state,
 pair: %s,

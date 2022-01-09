@@ -46,7 +46,7 @@ func (s *Telegram) Start() {
 	}
 }
 
-func (s *Telegram) Send(msg string) {
+func (s *Telegram) SendAsync(msg string) {
 	s.sendCh <- msg
 }
 

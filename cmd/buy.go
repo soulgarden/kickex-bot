@@ -61,7 +61,7 @@ var buyCmd = &cobra.Command{
 
 		go tgSvc.Start()
 
-		tgSvc.Send(fmt.Sprintf("env: %s, buy bot starting", cfg.Env))
+		tgSvc.SendAsync(fmt.Sprintf("env: %s, buy bot starting", cfg.Env))
 		defer tgSvc.SendSync(fmt.Sprintf("env: %s, buy bot shutting down", cfg.Env))
 
 		err = wsSvc.Connect(interrupt)

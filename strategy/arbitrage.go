@@ -26,9 +26,10 @@ import (
 	"github.com/soulgarden/kickex-bot/storage"
 )
 
-const sendInterval = 300 * time.Second
-const spreadForAlert = 2.7
+const sendInterval = time.Minute
+const spreadForAlert = 1
 const orderExecutionInterval = time.Minute * 5
+const lastStepOrderExecutionInterval = time.Minute * 60
 const chSize = 1024
 
 type Arbitrage struct {
@@ -200,8 +201,7 @@ func (s *Arbitrage) check(ctx context.Context, pair *storage.Pair) {
 	)
 
 	if err != nil {
-		s.logger.Fatal().Err(err).Msg("check buy base option finished with error")
-		s.tgSvc.Send(
+		s.tgSvc.SendAsync(
 			fmt.Sprintf(
 				`env: %s,
 pair %s,
@@ -212,6 +212,8 @@ error %s`,
 				err.Error(),
 			),
 		)
+
+		s.logger.Fatal().Err(err).Msg("check buy base option finished with error") // refactor
 	}
 
 	s.checkBuyQuotedOptions(
@@ -255,36 +257,15 @@ func (s *Arbitrage) checkBuyBaseOption(
 
 	startBuyVolume := s.totalBuyInUSDT
 
-	// option 1 // buy base for usdt / sell base for quoted / sell quoted for usdt
+	// option 1 // buy base for USDT / sell base for quoted / sell quoted for USDT
 	if baseBuyOrder.Total.Cmp(startBuyVolume) == 1 &&
 		baseQuotedSellOrder.Total.Cmp(baseQuotedPair.MinVolume) == 1 &&
 		quotedSellOrder.Total.Cmp(quotedUSDTPair.MinVolume) == 1 {
 		baseBuyOrderAmount := big.NewFloat(0).Quo(startBuyVolume, baseBuyOrder.Price)
 
-		s.logger.Debug().
-			Str("pair", baseUSDTPair.GetPairName()).
-			Str("total", startBuyVolume.Text('f', baseUSDTPair.VolumeScale)).
-			Str("price", baseBuyOrder.Price.Text('f', baseUSDTPair.PriceScale)).
-			Str("amount", baseBuyOrderAmount.Text('f', baseUSDTPair.QuantityScale)).
-			Msg("buy base")
-
 		baseQuotedSellOrderTotal := big.NewFloat(0).Mul(baseBuyOrderAmount, baseQuotedSellOrder.Price)
 
-		s.logger.Debug().
-			Str("pair", baseQuotedPair.GetPairName()).
-			Str("amount", baseBuyOrderAmount.Text('f', baseUSDTPair.QuantityScale)).
-			Str("price", baseQuotedSellOrder.Price.Text('f', baseQuotedPair.PriceScale)).
-			Str("total", baseQuotedSellOrderTotal.Text('f', baseQuotedPair.VolumeScale)).
-			Msg("sell base for quoted")
-
 		quotedSellOrderUSDTAmount := big.NewFloat(0).Mul(baseQuotedSellOrderTotal, quotedSellOrder.Price)
-
-		s.logger.Debug().
-			Str("pair", quotedUSDTPair.GetPairName()).
-			Str("amount", baseQuotedSellOrderTotal.Text('f', dictionary.ExtendedPrecision)).
-			Str("price", quotedSellOrder.Price.Text('f', baseUSDTPair.PriceScale)).
-			Str("total", quotedSellOrderUSDTAmount.Text('f', quotedUSDTPair.VolumeScale)).
-			Msg("sell quoted")
 
 		// (x * 100 / y) - 100
 		spread := big.NewFloat(0).Sub(
@@ -295,153 +276,205 @@ func (s *Arbitrage) checkBuyBaseOption(
 
 		s.logger.Info().
 			Str("pair", baseQuotedPair.GetPairName()).
-			Str("before usdt amount", startBuyVolume.Text('f', dictionary.ExtendedPrecision)).
-			Str("after usdt amount", quotedSellOrderUSDTAmount.Text('f', dictionary.ExtendedPrecision)).
+			Str("before USDT amount", startBuyVolume.Text('f', dictionary.ExtendedPrecision)).
+			Str("after USDT amount", quotedSellOrderUSDTAmount.Text('f', dictionary.ExtendedPrecision)).
 			Str("spread", spread.Text('f', dictionary.DefaultPrecision)).
 			Msg("pair spread")
 
 		if spread.Cmp(big.NewFloat(spreadForAlert)) == 1 {
-			now := time.Now()
-			if s.sentAt == nil || time.Now().After(s.sentAt.Add(sendInterval)) {
-				s.sentAt = &now
+			s.sendTGBuyBaseArbitrageAvailable(baseQuotedPair, startBuyVolume, quotedSellOrderUSDTAmount, spread)
 
-				s.tgSvc.Send(
-					fmt.Sprintf(
-						`env: %s,
-pair %s,
-arbitrage available,
-before usdt amount %s,
-after usdt amount %s,
-spread %s`,
-						s.cfg.Env,
-						baseQuotedPair.GetPairName(),
-						startBuyVolume.Text('f', dictionary.ExtendedPrecision),
-						quotedSellOrderUSDTAmount.Text('f', dictionary.ExtendedPrecision),
-						spread.Text('f', dictionary.DefaultPrecision),
-					),
-				)
-			}
-
-			// 1. buy base for usdt
-			s.logger.Warn().
-				Str("pair", baseUSDTPair.GetPairName()).
-				Str("amount", s.prepareAmount(baseBuyOrderAmount, baseUSDTPair)).
-				Str("price", baseBuyOrder.Price.Text('f', baseUSDTPair.PriceScale)).
-				Str("total", startBuyVolume.Text('f', baseUSDTPair.QuantityScale)).
-				Msg("buy base")
-
-			oid, err := s.createOrder(
+			// 1. buy base for USDT
+			buyBaseOrder, err := s.buyBaseForUSDT(
 				ctx,
 				baseUSDTPair,
+				baseBuyOrder,
 				baseBuyOrderAmount,
-				baseBuyOrder.Price,
-				dictionary.BuyBase,
+				startBuyVolume,
 			)
-			s.logger.Err(err).Str("pair", baseUSDTPair.GetPairName()).Int64("oid", oid).Msg("create order")
-
 			if err != nil {
-				if errors.Is(err, dictionary.ErrOrderNotCompleted) {
-					return s.cancelOrder(oid, baseUSDTPair)
-				}
-
 				return err
 			}
 
 			// 2. sell base for quoted
-			o := s.storage.GetUserOrder(oid)
-			buyBaseOrder := o
-
-			if o == nil {
-				s.logger.
-					Err(dictionary.ErrOrderNotFoundOrOutdated).
-					Int64("oid", oid).
-					Msg("order not found in order book")
-
-				return dictionary.ErrOrderNotFoundOrOutdated
-			}
-
-			s.logger.Warn().
-				Str("pair", baseQuotedPair.GetPairName()).
-				Str("amount", s.prepareAmount(o.TotalBuyVolume, baseQuotedPair)).
-				Str("price", baseQuotedSellOrder.Price.Text('f', baseQuotedPair.PriceScale)).
-				Str("total", baseQuotedSellOrderTotal.Text('f', baseQuotedPair.VolumeScale)).
-				Msg("sell base for quoted")
-
-			oid, err = s.createOrder(
+			sellBaseOrder, err := s.sellBaseForQuoted(
 				ctx,
 				baseQuotedPair,
-				o.TotalBuyVolume,
-				baseQuotedSellOrder.Price,
-				dictionary.SellBase,
+				buyBaseOrder,
+				baseQuotedSellOrder,
+				baseQuotedSellOrderTotal,
 			)
-			s.logger.Err(err).Str("pair", baseQuotedPair.GetPairName()).Int64("oid", oid).Msg("create order")
-
 			if err != nil {
-				if errors.Is(err, dictionary.ErrOrderNotCompleted) {
-					s.sendTGFailed(s.cfg.Env, dictionary.SecondStep, oid, baseQuotedPair.GetPairName())
-
-					return s.cancelOrder(oid, baseQuotedPair)
-				}
-
 				return err
 			}
 
-			// 3. sell base for quoted
-			o = s.storage.GetUserOrder(oid)
-			if o == nil {
-				s.logger.
-					Err(dictionary.ErrOrderNotFoundOrOutdated).
-					Int64("oid", oid).
-					Msg("order not found in order book")
-
-				return dictionary.ErrOrderNotFoundOrOutdated
-			}
-
-			sellVolume := big.NewFloat(0).Sub(o.TotalBuyVolume, o.TotalFeeQuoted)
-
-			s.logger.Warn().
-				Str("pair", quotedUSDTPair.GetPairName()).
-				Str("amount", s.prepareAmount(sellVolume, quotedUSDTPair)).
-				Str("price", quotedSellOrder.Price.Text('f', baseUSDTPair.PriceScale)).
-				Str("total", quotedSellOrderUSDTAmount.Text('f', quotedUSDTPair.VolumeScale)).
-				Msg("sell quoted")
-
-			oid, err = s.createOrder(
-				ctx,
-				quotedUSDTPair,
-				sellVolume,
-				quotedSellOrder.Price,
-				dictionary.SellBase,
-			)
-			s.logger.Err(err).Str("pair", baseQuotedPair.GetPairName()).Int64("oid", oid).Msg("create order")
-
-			if err != nil {
-				if errors.Is(err, dictionary.ErrOrderNotCompleted) {
-					s.sendTGFailed(s.cfg.Env, dictionary.ThirdStepStep, oid, baseQuotedPair.GetPairName())
-
-					return s.cancelOrder(oid, baseQuotedPair)
+			// 3. sell quoted for USDT
+			go func() {
+				sellQuotedOrder, err := s.sellQuotedForUSDT(
+					ctx,
+					sellBaseOrder,
+					quotedUSDTPair,
+					quotedSellOrder,
+					quotedSellOrderUSDTAmount,
+				)
+				if err != nil {
+					return
 				}
 
-				return err
-			}
-
-			o = s.storage.GetUserOrder(oid)
-			if o == nil {
-				s.logger.
-					Err(dictionary.ErrOrderNotFoundOrOutdated).
-					Int64("oid", oid).
-					Msg("order not found in order book")
-
-				return dictionary.ErrOrderNotFoundOrOutdated
-			}
-
-			s.sendTGSuccess(s.cfg.Env, baseQuotedPair.GetPairName(), big.NewFloat(0).
-				Add(buyBaseOrder.TotalSellVolume, buyBaseOrder.TotalFeeQuoted).
-				Text('f', baseUSDTPair.VolumeScale), sellVolume.Text('f', baseUSDTPair.VolumeScale))
+				s.sendTGSuccess(
+					s.cfg.Env,
+					baseQuotedPair.GetPairName(),
+					big.NewFloat(0).
+						Add(buyBaseOrder.TotalSellVolume, buyBaseOrder.TotalFeeQuoted).
+						Text('f', baseUSDTPair.VolumeScale),
+					sellQuotedOrder.TotalBuyVolume.Text('f', baseUSDTPair.VolumeScale),
+				)
+			}()
 		}
 	}
 
 	return nil
+}
+
+func (s *Arbitrage) buyBaseForUSDT(
+	ctx context.Context,
+	baseUSDTPair *storage.Pair,
+	baseBuyOrder *storage.BookOrder,
+	baseBuyOrderAmount, startBuyVolume *big.Float,
+) (*storage.Order, error) {
+	s.logger.Warn().
+		Str("pair", baseUSDTPair.GetPairName()).
+		Str("amount", s.prepareAmount(baseBuyOrderAmount, baseUSDTPair)).
+		Str("price", baseBuyOrder.Price.Text('f', baseUSDTPair.PriceScale)).
+		Str("total", startBuyVolume.Text('f', baseUSDTPair.QuantityScale)).
+		Msg("buy base")
+
+	oid, err := s.createAndWaitExecOrder(
+		ctx,
+		baseUSDTPair,
+		baseBuyOrderAmount,
+		baseBuyOrder.Price,
+		dictionary.BuyBase,
+		orderExecutionInterval,
+	)
+	s.logger.Err(err).Str("pair", baseUSDTPair.GetPairName()).Int64("oid", oid).Msg("create order")
+
+	if err != nil {
+		if errors.Is(err, dictionary.ErrOrderNotCompleted) {
+			return nil, s.cancelOrder(oid, baseUSDTPair)
+		}
+
+		return nil, err
+	}
+
+	buyBaseOrder := s.storage.GetUserOrder(oid)
+
+	if buyBaseOrder == nil {
+		s.logger.
+			Err(dictionary.ErrOrderNotFoundOrOutdated).
+			Int64("oid", oid).
+			Msg("order not found in order book")
+
+		return nil, dictionary.ErrOrderNotFoundOrOutdated
+	}
+
+	return buyBaseOrder, nil
+}
+
+func (s *Arbitrage) sellBaseForQuoted(
+	ctx context.Context,
+	baseQuotedPair *storage.Pair,
+	buyBaseOrder *storage.Order,
+	baseQuotedSellOrder *storage.BookOrder,
+	baseQuotedSellOrderTotal *big.Float,
+) (*storage.Order, error) {
+	s.logger.Warn().
+		Str("pair", baseQuotedPair.GetPairName()).
+		Str("amount", s.prepareAmount(buyBaseOrder.TotalBuyVolume, baseQuotedPair)).
+		Str("price", baseQuotedSellOrder.Price.Text('f', baseQuotedPair.PriceScale)).
+		Str("total", baseQuotedSellOrderTotal.Text('f', baseQuotedPair.VolumeScale)).
+		Msg("sell base for quoted")
+
+	oid, err := s.createAndWaitExecOrder(
+		ctx,
+		baseQuotedPair,
+		buyBaseOrder.TotalBuyVolume,
+		baseQuotedSellOrder.Price,
+		dictionary.SellBase,
+		orderExecutionInterval,
+	)
+	s.logger.Err(err).Str("pair", baseQuotedPair.GetPairName()).Int64("oid", oid).Msg("create order")
+
+	if err != nil {
+		if errors.Is(err, dictionary.ErrOrderNotCompleted) {
+			s.sendTGFailed(s.cfg.Env, dictionary.SecondStep, oid, baseQuotedPair.GetPairName())
+
+			return nil, s.cancelOrder(oid, baseQuotedPair) // create order selling what was bought on the first step
+		}
+
+		return nil, err
+	}
+
+	sellBaseOrder := s.storage.GetUserOrder(oid)
+	if sellBaseOrder == nil {
+		s.logger.
+			Err(dictionary.ErrOrderNotFoundOrOutdated).
+			Int64("oid", oid).
+			Msg("order not found in order book")
+
+		return nil, dictionary.ErrOrderNotFoundOrOutdated
+	}
+
+	return sellBaseOrder, nil
+}
+
+func (s *Arbitrage) sellQuotedForUSDT(
+	ctx context.Context,
+	sellBaseOrder *storage.Order,
+	quotedUSDTPair *storage.Pair,
+	quotedSellOrder *storage.BookOrder,
+	quotedSellOrderUSDTAmount *big.Float,
+) (*storage.Order, error) {
+	sellVolume := big.NewFloat(0).Sub(sellBaseOrder.TotalBuyVolume, sellBaseOrder.TotalFeeQuoted)
+
+	s.logger.Warn().
+		Str("pair", quotedUSDTPair.GetPairName()).
+		Str("amount", s.prepareAmount(sellVolume, quotedUSDTPair)).
+		Str("price", quotedSellOrder.Price.Text('f', quotedUSDTPair.PriceScale)).
+		Str("total", quotedSellOrderUSDTAmount.Text('f', quotedUSDTPair.VolumeScale)).
+		Msg("sell quoted")
+
+	oid, err := s.createAndWaitExecOrder(
+		ctx,
+		quotedUSDTPair,
+		sellVolume,
+		quotedSellOrder.Price,
+		dictionary.SellBase,
+		lastStepOrderExecutionInterval,
+	)
+	s.logger.Err(err).Str("pair", quotedUSDTPair.GetPairName()).Int64("oid", oid).Msg("create order")
+
+	if err != nil {
+		if errors.Is(err, dictionary.ErrOrderNotCompleted) {
+			s.sendTGFailed(s.cfg.Env, dictionary.ThirdStepStep, oid, quotedUSDTPair.GetPairName())
+
+			return nil, s.cancelOrder(oid, quotedUSDTPair)
+		}
+
+		return nil, err
+	}
+
+	sellQuotedOrder := s.storage.GetUserOrder(oid)
+	if sellQuotedOrder == nil {
+		s.logger.
+			Err(dictionary.ErrOrderNotFoundOrOutdated).
+			Int64("oid", oid).
+			Msg("order not found in order book")
+
+		return nil, dictionary.ErrOrderNotFoundOrOutdated
+	}
+
+	return sellQuotedOrder, nil
 }
 
 func (s *Arbitrage) checkBuyQuotedOptions(
@@ -459,36 +492,15 @@ func (s *Arbitrage) checkBuyQuotedOptions(
 		Str("base sell order total", baseSellOrder.Total.String()).
 		Msg("option 2 info")
 
-	// option 2 // buy quoted for usdt / buy base for quoted / sell base for usdt
+	// option 2 // buy quoted for USDT / buy base for quoted / sell base for USDT
 	if quotedBuyOrder.Total.Cmp(quotedUSDTPair.MinVolume) == 1 &&
 		baseQuotedBuyOrder.Total.Cmp(baseQuotedPair.MinVolume) == 0 &&
 		baseSellOrder.Total.Cmp(baseUSDTPair.MinVolume) == 0 {
 		quotedBuyOrderAmount := big.NewFloat(0).Quo(quotedUSDTPair.MinVolume, quotedBuyOrder.Price)
 
-		s.logger.Debug().
-			Str("pair", quotedUSDTPair.GetPairName()).
-			Str("amount", quotedUSDTPair.MinVolume.Text('f', dictionary.ExtendedPrecision)).
-			Str("price", quotedBuyOrder.Price.Text('f', quotedUSDTPair.PriceScale)).
-			Str("total", quotedBuyOrderAmount.Text('f', dictionary.ExtendedPrecision)).
-			Msg("buy quoted")
-
 		baseQuotedBuyOrderTotal := big.NewFloat(0).Mul(quotedBuyOrderAmount, baseQuotedBuyOrder.Price)
 
-		s.logger.Debug().
-			Str("pair", baseQuotedPair.GetPairName()).
-			Str("amount", baseQuotedBuyOrderTotal.Text('f', dictionary.ExtendedPrecision)).
-			Str("price", baseQuotedBuyOrder.Price.Text('f', baseQuotedPair.PriceScale)).
-			Str("total", baseQuotedPair.MinVolume.Text('f', dictionary.ExtendedPrecision)).
-			Msg("buy base for quoted")
-
 		baseSellOrderUSDTAmount := big.NewFloat(0).Mul(baseQuotedBuyOrderTotal, baseSellOrder.Price)
-
-		s.logger.Debug().
-			Str("pair", baseUSDTPair.GetPairName()).
-			Str("amount", baseQuotedBuyOrderTotal.Text('f', dictionary.ExtendedPrecision)).
-			Str("price", baseSellOrder.Price.Text('f', baseUSDTPair.PriceScale)).
-			Str("total", baseSellOrderUSDTAmount.Text('f', dictionary.ExtendedPrecision)).
-			Msg("sell quoted")
 
 		// (x * 100 / y) - 100
 		spread := big.NewFloat(0).Sub(
@@ -499,40 +511,23 @@ func (s *Arbitrage) checkBuyQuotedOptions(
 
 		s.logger.Info().
 			Str("pair", baseQuotedPair.GetPairName()).
-			Str("before usdt amount", quotedUSDTPair.MinVolume.Text('f', dictionary.ExtendedPrecision)).
-			Str("after usdt amount", baseSellOrderUSDTAmount.Text('f', dictionary.ExtendedPrecision)).
+			Str("before USDT amount", quotedUSDTPair.MinVolume.Text('f', dictionary.ExtendedPrecision)).
+			Str("after USDT amount", baseSellOrderUSDTAmount.Text('f', dictionary.ExtendedPrecision)).
 			Str("spread", spread.Text('f', dictionary.DefaultPrecision)).
 			Msg("pair spread")
 
 		if spread.Cmp(big.NewFloat(spreadForAlert)) == 1 {
-			now := time.Now()
-			if s.sentAt == nil || time.Now().After(s.sentAt.Add(sendInterval)) {
-				s.sentAt = &now
-
-				s.tgSvc.Send(
-					fmt.Sprintf(
-						`env: %s,
-arbitrage available, but not supported
-pair %s,
-before usdt amount %s,
-after usdt amount %s,
-spread %s`,
-						s.cfg.Env,
-						baseQuotedPair.GetPairName(),
-						quotedUSDTPair.MinVolume.Text('f', dictionary.ExtendedPrecision),
-						baseSellOrderUSDTAmount.Text('f', dictionary.ExtendedPrecision),
-						spread.Text('f', dictionary.DefaultPrecision),
-					))
-			}
+			s.sendTGBuyQuotedArbitrageAvailable(baseQuotedPair, quotedUSDTPair, baseSellOrderUSDTAmount, spread)
 		}
 	}
 }
 
-func (s *Arbitrage) createOrder(
+func (s *Arbitrage) createAndWaitExecOrder(
 	ctx context.Context,
 	pair *storage.Pair,
 	amount, price *big.Float,
 	intent int,
+	waitExecDuration time.Duration,
 ) (int64, error) {
 	oid, err := s.sendCreateOrderRequest(ctx, pair, amount, price, intent)
 	s.logger.Err(err).Msg("send create order request")
@@ -541,7 +536,7 @@ func (s *Arbitrage) createOrder(
 		return 0, err
 	}
 
-	isCompleted, err := s.watchOrder(ctx, oid, pair)
+	isCompleted, err := s.watchOrder(ctx, oid, pair, waitExecDuration)
 	s.logger.Err(err).Int64("oid", oid).Bool("is completed", isCompleted).Msg("watch order")
 
 	if err != nil {
@@ -655,6 +650,7 @@ func (s *Arbitrage) watchOrder(
 	ctx context.Context,
 	orderID int64,
 	pair *storage.Pair,
+	waitExecDuration time.Duration,
 ) (isCompleted bool, err error) {
 	accEventCh := s.accEventBroker.Subscribe("watch order")
 
@@ -682,7 +678,7 @@ func (s *Arbitrage) watchOrder(
 			}
 
 			//todo: check partial completion
-			// order sent, wait creation
+			// order sent, waiting for creation
 			order := s.storage.GetUserOrder(orderID)
 			if order == nil {
 				s.logger.Warn().Int64("oid", orderID).Msg("order not found")
@@ -690,7 +686,7 @@ func (s *Arbitrage) watchOrder(
 				if startedTime.Add(orderCreationDuration).Before(time.Now()) {
 					s.logger.Err(dictionary.ErrOrderCreationEventNotReceived).Msg("order creation event not received")
 
-					s.tgSvc.Send(fmt.Sprintf(
+					s.tgSvc.SendAsync(fmt.Sprintf(
 						`env: %s,
 order creation event not received,
 id: %d`,
@@ -733,7 +729,7 @@ id: %d`,
 
 				return false, nil
 			}
-		case <-time.After(orderExecutionInterval):
+		case <-time.After(waitExecDuration):
 			s.logger.Warn().Int64("oid", orderID).Msg("order state is not executed")
 
 			return false, dictionary.ErrOrderNotCompleted
@@ -782,13 +778,13 @@ func (s *Arbitrage) prepareAmount(a *big.Float, pair *storage.Pair) string {
 }
 
 func (s *Arbitrage) sendTGSuccess(env, pairName, beforeUSDTAmount, afterUSDTAmount string) {
-	s.tgSvc.Send(
+	s.tgSvc.SendAsync(
 		fmt.Sprintf(
 			`env: %s,
 			arbitrage done,
 			pair %s,
-			before usdt amount %s,
-			after usdt amount %s`,
+			before USDT amount %s,
+			after USDT amount %s`,
 			env,
 			pairName,
 			beforeUSDTAmount,
@@ -797,7 +793,7 @@ func (s *Arbitrage) sendTGSuccess(env, pairName, beforeUSDTAmount, afterUSDTAmou
 }
 
 func (s *Arbitrage) sendTGFailed(env string, step int, oid int64, pairName string) {
-	s.tgSvc.Send(
+	s.tgSvc.SendAsync(
 		fmt.Sprintf(
 			`env: %s,
 			arbitrage failed on %d step,
@@ -808,4 +804,59 @@ func (s *Arbitrage) sendTGFailed(env string, step int, oid int64, pairName strin
 			oid,
 			pairName,
 		))
+}
+
+func (s *Arbitrage) sendTGBuyBaseArbitrageAvailable(
+	baseQuotedPair *storage.Pair,
+	startBuyVolume *big.Float,
+	quotedSellOrderUSDTAmount *big.Float,
+	spread *big.Float,
+) {
+	now := time.Now()
+	if s.sentAt == nil || time.Now().After(s.sentAt.Add(sendInterval)) {
+		s.sentAt = &now
+
+		s.tgSvc.SendAsync(
+			fmt.Sprintf(
+				`env: %s,
+pair %s,
+arbitrage available,
+before USDT amount %s,
+after USDT amount %s,
+spread %s`,
+				s.cfg.Env,
+				baseQuotedPair.GetPairName(),
+				startBuyVolume.Text('f', dictionary.ExtendedPrecision),
+				quotedSellOrderUSDTAmount.Text('f', dictionary.ExtendedPrecision),
+				spread.Text('f', dictionary.DefaultPrecision),
+			),
+		)
+	}
+}
+
+func (s *Arbitrage) sendTGBuyQuotedArbitrageAvailable(
+	baseQuotedPair *storage.Pair,
+	quotedUSDTPair *storage.Pair,
+	baseSellOrderUSDTAmount *big.Float,
+	spread *big.Float,
+) {
+	now := time.Now()
+	if s.sentAt == nil || time.Now().After(s.sentAt.Add(sendInterval)) {
+		s.sentAt = &now
+
+		s.tgSvc.SendAsync(
+			fmt.Sprintf(
+				`env: %s,
+arbitrage available, but not supported
+pair %s,
+before USDT amount %s,
+after USDT amount %s,
+spread %s`,
+				s.cfg.Env,
+				baseQuotedPair.GetPairName(),
+				quotedUSDTPair.MinVolume.Text('f', dictionary.ExtendedPrecision),
+				baseSellOrderUSDTAmount.Text('f', dictionary.ExtendedPrecision),
+				spread.Text('f', dictionary.DefaultPrecision),
+			))
+	}
 }

@@ -460,7 +460,7 @@ func (s *Spread) isSellOrderCreationAvailable(sess *storageSpread.Session, force
 				Str("max bid price", s.orderBook.GetMaxBidPrice().Text('f', s.pair.PriceScale)).
 				Msg("allow to create new session after 1h of inability to create an order")
 
-			s.tgSvc.Send(fmt.Sprintf(
+			s.tgSvc.SendAsync(fmt.Sprintf(
 				`env: %s,
 pair: %s,
 order price: %s,
@@ -1185,7 +1185,7 @@ func (s *Spread) setBuyOrderExecutedFlags(sess *storageSpread.Session, order *st
 	s.orderBook.SubProfit(s.sessSvc.GetSessTotalBoughtCost(sess))
 	s.orderBook.OrderBookEventBroker.Publish(0)
 
-	s.tgSvc.Send(fmt.Sprintf(
+	s.tgSvc.SendAsync(fmt.Sprintf(
 		`env: %s,
 buy order reached done state,
 pair: %s,
@@ -1232,7 +1232,7 @@ func (s *Spread) setSellOrderExecutedFlags(sess *storageSpread.Session, order *s
 	soldVolume := s.sessSvc.GetSessTotalSoldVolume(sess)
 	boughtVolume := s.sessSvc.GetSessTotalBoughtVolume(sess)
 
-	s.tgSvc.Send(fmt.Sprintf(
+	s.tgSvc.SendAsync(fmt.Sprintf(
 		`env: %s,
 sell order reached done state,
 pair: %s,

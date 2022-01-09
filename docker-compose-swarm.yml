@@ -8,7 +8,7 @@ volumes:
 
 services:
   arbitrage:
-    image: soulgarden/kickex-bot:1.0.58
+    image: soulgarden/kickex-bot:1.0.60
     environment:
       CFG_PATH: /conf.local.json
     stop_signal: SIGINT
@@ -28,7 +28,7 @@ services:
         tag: "docker.kickex-bot.arbitrage.prod"
 
   spread:
-    image: soulgarden/kickex-bot:1.0.58
+    image: soulgarden/kickex-bot:1.0.60
     environment:
       CFG_PATH: /conf.local.json
     stop_signal: SIGINT
@@ -44,7 +44,7 @@ services:
         tag: "docker.kickex-bot.spread.prod"
 
   buy:
-    image: soulgarden/kickex-bot:1.0.58
+    image: soulgarden/kickex-bot:1.0.60
     environment:
       CFG_PATH: /conf.local.json
     stop_signal: SIGINT

@@ -127,7 +127,7 @@ var arbitrageCmd = &cobra.Command{
 			time.Sleep(pairsWaitingDuration)
 		}
 
-		tgSvc.Send(fmt.Sprintf("env: %s, arbitrage bot starting", cfg.Env))
+		tgSvc.SendAsync(fmt.Sprintf("env: %s, arbitrage bot starting", cfg.Env))
 		defer tgSvc.SendSync(fmt.Sprintf("env: %s, arbitrage bot shutting down", cfg.Env))
 
 		wg.Add(1)
