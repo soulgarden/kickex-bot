@@ -7,7 +7,7 @@ image:
     repository: soulgarden/kickex-bot
     pullPolicy: IfNotPresent
     # Overrides the image tag whose default is the chart appVersion.
-    tag: "1.0.61"
+    tag: "1.0.62"
 imagePullSecrets: [ ]
 nameOverride: ""
 fullnameOverride: ""
@@ -67,9 +67,9 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 app:
-    api_key: demokey
-    api_key_pass: demopass
-    default_addr: demo.gate.kickex.com
+    api_key: erPsmkAOWdZ4WxS4z1CL2LuPqvvjrAUckKf1zO5NTCg=
+    api_key_pass: CSkl8ew4W*dj*p0%25jAHiZBYJXHxpev
+    default_addr: gate.kickex.com
     scheme: wss
     spread:
         pair: "KICK/USDT"
@@ -84,11 +84,11 @@ app:
         spread_for_stop_buy_trade: "1.7"
         total_buy_in_usdt: "10"
     arbitrage:
-        pair: "KICK/BTC"
+        pair: "KICK/ETH"
         total_buy_in_usdt: "5"
     telegram:
-        token: token
-        chat_id: 0
-    env: arbitrage
+        token: 1758795648:AAGy0yUlyxHFe73QyN4tFN-QW6BM5WD1B90
+        chat_id: -517314101
+    env: microk8sarbitragekicketh
     storage_dump_path: /storage/%s.spread.state.json
-    debug: false
+    debug: true

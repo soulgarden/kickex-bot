@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"io/ioutil"
 
+	"github.com/mailru/easyjson"
+
 	"github.com/soulgarden/kickex-bot/dictionary"
 
 	"github.com/soulgarden/kickex-bot/response"
@@ -46,7 +48,7 @@ func (d *DumpStorage) Recover(path string) error {
 		return err
 	}
 
-	err = json.Unmarshal(data, d)
+	err = easyjson.Unmarshal(data, d)
 	if err != nil {
 		return err
 	}

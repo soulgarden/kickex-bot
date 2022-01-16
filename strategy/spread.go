@@ -2,7 +2,6 @@ package strategy
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -11,6 +10,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/mailru/easyjson"
 
 	spreadSvc "github.com/soulgarden/kickex-bot/service/spread"
 	storageSpread "github.com/soulgarden/kickex-bot/storage/spread"
@@ -514,7 +515,7 @@ func (s *Spread) listenNewOrders(
 			}
 
 			rid := &response.ID{}
-			err := json.Unmarshal(msg, rid)
+			err := easyjson.Unmarshal(msg, rid)
 
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
@@ -542,7 +543,7 @@ func (s *Spread) listenNewOrders(
 
 			co := &response.CreatedOrder{}
 
-			err = json.Unmarshal(msg, co)
+			err = easyjson.Unmarshal(msg, co)
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
@@ -574,7 +575,7 @@ func (s *Spread) listenNewOrders(
 func (s *Spread) checkListenOrderErrors(msg []byte, sess *storageSpread.Session) (isSkipRequired bool, err error) {
 	er := &response.Error{}
 
-	err = json.Unmarshal(msg, er)
+	err = easyjson.Unmarshal(msg, er)
 	if err != nil {
 		s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 

@@ -2,13 +2,14 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math/big"
 	"os"
 	"strconv"
 	"syscall"
 	"time"
+
+	"github.com/mailru/easyjson"
 
 	"github.com/rs/zerolog"
 	"github.com/soulgarden/kickex-bot/broker"
@@ -78,7 +79,7 @@ func (s *Balance) GetBalance(ctx context.Context, interrupt chan<- os.Signal) er
 
 			rid := &response.ID{}
 
-			err := json.Unmarshal(msg, rid)
+			err := easyjson.Unmarshal(msg, rid)
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
@@ -105,7 +106,7 @@ func (s *Balance) GetBalance(ctx context.Context, interrupt chan<- os.Signal) er
 			}
 
 			r := &response.Balances{}
-			err = json.Unmarshal(msg, r)
+			err = easyjson.Unmarshal(msg, r)
 
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
@@ -210,7 +211,7 @@ func (s *Balance) WaitForSufficientBalance(ctx context.Context, pair string, amo
 func (s *Balance) checkErrorResponse(msg []byte) error {
 	er := &response.Error{}
 
-	err := json.Unmarshal(msg, er)
+	err := easyjson.Unmarshal(msg, er)
 	if err != nil {
 		s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 

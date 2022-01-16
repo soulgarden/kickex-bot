@@ -4,9 +4,12 @@ lint:
 fmt:
 	gofmt -w .
 
+test:
+	ROOT_DIR=${PWD} go test -failfast ./...
+
 build:
-	docker build  . -f ./docker/bot/Dockerfile -t soulgarden/kickex-bot:1.0.61
-	docker push soulgarden/kickex-bot:1.0.61
+	docker build  . -f ./docker/bot/Dockerfile -t soulgarden/kickex-bot:1.0.62
+	docker push soulgarden/kickex-bot:1.0.62
 
 build_fluentd:
 	docker build ./docker/fluentd -t soulgarden/kickex-bot:fluentd

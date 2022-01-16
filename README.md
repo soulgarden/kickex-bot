@@ -30,3 +30,10 @@ Implemented 3 strategies:
 ![](./arbitrage_architecture.png)
 
 
+### Linters
+
+    make lint
+
+### Tests
+
+    make test

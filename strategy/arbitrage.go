@@ -2,7 +2,6 @@ package strategy
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -12,6 +11,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/mailru/easyjson"
 
 	spreadSvc "github.com/soulgarden/kickex-bot/service/spread"
 
@@ -553,7 +554,7 @@ func (s *Arbitrage) createAndWaitExecOrder(
 func (s *Arbitrage) checkCreateOrderError(msg []byte) error {
 	er := &response.Error{}
 
-	err := json.Unmarshal(msg, er)
+	err := easyjson.Unmarshal(msg, er)
 	if err != nil {
 		s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
@@ -608,7 +609,7 @@ func (s *Arbitrage) sendCreateOrderRequest(
 			}
 
 			rid := &response.ID{}
-			err := json.Unmarshal(msg, rid)
+			err := easyjson.Unmarshal(msg, rid)
 
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
@@ -631,7 +632,7 @@ func (s *Arbitrage) sendCreateOrderRequest(
 
 			co := &response.CreatedOrder{}
 
-			err = json.Unmarshal(msg, co)
+			err = easyjson.Unmarshal(msg, co)
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 

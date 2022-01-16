@@ -6,3 +6,4 @@
 /conf/conf.local.json
 /conf/conf.demo.json
 /storage/*.json
+helm

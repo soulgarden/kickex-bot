@@ -1,12 +1,12 @@
 package response
 
 type Pairs struct {
-	ID    string `json:"id"`
-	Pairs []*Pair
+	ID    string  `json:"id"`
+	Pairs []*Pair `json:"pairs"`
 }
 
 type Pair struct {
-	BaseCurrency    string `json:"BaseCurrency"`
+	BaseCurrency    string `json:"baseCurrency"`
 	QuoteCurrency   string `json:"quoteCurrency"`
 	Price           string `json:"price"`
 	Price24hChange  string `json:"price24hChange"`

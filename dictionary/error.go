@@ -31,3 +31,5 @@ var ErrOrderCreationEventNotReceived = errors.New("order creation event not rece
 var ErrOrderNotCompleted = errors.New("order not completed")
 
 var ErrChannelOverflowed = errors.New("channel overflowed")
+
+var ErrInterfaceAssertion = errors.New("invalid interface assertion")

@@ -2,13 +2,14 @@ package subscriber
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math/big"
 	"os"
 	"strconv"
 	"sync"
 	"syscall"
+
+	"github.com/mailru/easyjson"
 
 	"github.com/soulgarden/kickex-bot/broker"
 	"github.com/soulgarden/kickex-bot/service"
@@ -77,8 +78,8 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan<- os.Signal, wg *sync.
 			}
 
 			rid := &response.ID{}
-			err := json.Unmarshal(msg, rid)
 
+			err := easyjson.Unmarshal(msg, rid)
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
@@ -102,7 +103,7 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan<- os.Signal, wg *sync.
 
 			r := &response.Pairs{}
 
-			err = json.Unmarshal(msg, r)
+			err = easyjson.Unmarshal(msg, r)
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
@@ -159,7 +160,7 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan<- os.Signal, wg *sync.
 func (s *Pairs) checkErrorResponse(msg []byte) error {
 	er := &response.Error{}
 
-	err := json.Unmarshal(msg, er)
+	err := easyjson.Unmarshal(msg, er)
 	if err != nil {
 		s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 

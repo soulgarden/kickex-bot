@@ -6,7 +6,7 @@ type GetOrder struct {
 }
 
 type Order struct {
-	Price  string
-	Amount string
-	Total  string
+	Price  string `json:"price"`
+	Amount string `json:"amount"`
+	Total  string `json:"total"`
 }

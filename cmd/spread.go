@@ -25,8 +25,7 @@ import (
 )
 
 const (
-	cleanupInterval = time.Minute * 10
-	interruptChSize = 100
+	cleanupInterval = time.Minute * 5
 )
 
 //nolint: gochecknoglobals

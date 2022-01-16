@@ -2,13 +2,14 @@ package subscriber
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math/big"
 	"os"
 	"strconv"
 	"sync"
 	"syscall"
+
+	"github.com/mailru/easyjson"
 
 	"github.com/soulgarden/kickex-bot/broker"
 	"github.com/soulgarden/kickex-bot/service"
@@ -93,7 +94,7 @@ func (s *OrderBook) Start(ctx context.Context, wg *sync.WaitGroup, interrupt cha
 
 			rid := &response.ID{}
 
-			err := json.Unmarshal(msg, rid)
+			err := easyjson.Unmarshal(msg, rid)
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
@@ -106,8 +107,6 @@ func (s *OrderBook) Start(ctx context.Context, wg *sync.WaitGroup, interrupt cha
 				continue
 			}
 
-			r := &response.BookResponse{}
-
 			s.logger.Debug().Bytes("payload", msg).Msg("got message")
 
 			err = s.checkErrorResponse(msg)
@@ -119,7 +118,9 @@ func (s *OrderBook) Start(ctx context.Context, wg *sync.WaitGroup, interrupt cha
 				return
 			}
 
-			err = json.Unmarshal(msg, r)
+			r := &response.BookResponse{}
+
+			err = easyjson.Unmarshal(msg, r)
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
@@ -162,7 +163,7 @@ func (s *OrderBook) updateMaxBids(r *response.BookResponse) error {
 		for _, bid := range r.Bids {
 			price, ok := big.NewFloat(0).SetString(bid.Price)
 			if !ok {
-				s.logger.Err(dictionary.ErrParseFloat).Msg("parse bid price")
+				s.logger.Err(dictionary.ErrParseFloat).Str("val", bid.Price).Msg("parse bid price")
 
 				return dictionary.ErrParseFloat
 			}
@@ -293,7 +294,7 @@ func (s *OrderBook) updateSpread() {
 func (s *OrderBook) checkErrorResponse(msg []byte) error {
 	er := &response.Error{}
 
-	err := json.Unmarshal(msg, er)
+	err := easyjson.Unmarshal(msg, er)
 	if err != nil {
 		s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 

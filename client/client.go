@@ -1,14 +1,16 @@
 package client
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/mailru/easyjson"
 
 	uuid "github.com/satori/go.uuid"
 
@@ -30,18 +32,16 @@ const readDeadline = 20 * time.Second
 const eventSize = 32768
 
 type Client struct {
-	id       int64
-	cfg      *conf.Bot
-	conn     *websocket.Conn
-	sendCh   chan Msg
-	ReadCh   chan []byte
-	logger   *zerolog.Logger
-	isClosed *abool.AtomicBool
-}
-
-type Msg struct {
-	Type    int
-	Payload []byte
+	id              int64
+	cfg             *conf.Bot
+	conn            *websocket.Conn
+	sendCh          chan request.Msg
+	ReadCh          chan []byte
+	logger          *zerolog.Logger
+	isClosed        *abool.AtomicBool
+	createOrderPool *sync.Pool
+	alterOrderPool  *sync.Pool
+	cancelOrderPool *sync.Pool
 }
 
 func (c *Client) read(interrupt chan<- os.Signal) {
@@ -138,7 +138,7 @@ func (c *Client) pinger() {
 
 	for range ticker.C {
 		if c.isClosed.IsNotSet() {
-			c.sendCh <- Msg{Type: websocket.PingMessage}
+			c.sendCh <- request.Msg{Type: websocket.PingMessage}
 		}
 	}
 }
@@ -150,7 +150,10 @@ func (c *Client) Close() {
 
 	c.isClosed.Set()
 
-	c.sendCh <- Msg{Type: websocket.CloseMessage, Payload: websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")}
+	c.sendCh <- request.Msg{
+		Type:    websocket.CloseMessage,
+		Payload: websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+	}
 
 	close(c.sendCh)
 	close(c.ReadCh)
@@ -159,11 +162,16 @@ func (c *Client) Close() {
 func (c *Client) authorize(apiKey, apiKeyPass string) error {
 	id := atomic.AddInt64(&c.id, 1)
 
-	body := &request.Auth{
+	r := &request.Auth{
 		ID:       strconv.FormatInt(id, dictionary.DefaultIntBase),
 		Type:     dictionary.AuthType,
 		APIKey:   apiKey,
 		Password: apiKeyPass,
+	}
+
+	body, err := easyjson.Marshal(r)
+	if err != nil {
+		return err
 	}
 
 	return c.sendMessage(body)
@@ -173,10 +181,15 @@ func (c *Client) authorize(apiKey, apiKeyPass string) error {
 func (c *Client) getUserOpenOrders(pair string) (int64, error) {
 	id := atomic.AddInt64(&c.id, 1)
 
-	body := &request.GetUsersOpenOrders{
+	r := &request.GetUsersOpenOrders{
 		ID:   strconv.FormatInt(id, dictionary.DefaultIntBase),
 		Type: dictionary.GetUsersOpenOrders,
 		Pair: pair,
+	}
+
+	body, err := easyjson.Marshal(r)
+	if err != nil {
+		return id, err
 	}
 
 	return id, c.sendMessage(body)
@@ -185,10 +198,15 @@ func (c *Client) getUserOpenOrders(pair string) (int64, error) {
 func (c *Client) SubscribeAccounting(includeDeals bool) (int64, error) {
 	id := atomic.AddInt64(&c.id, 1)
 
-	body := &request.SubscribeAccounting{
+	r := &request.SubscribeAccounting{
 		ID:           strconv.FormatInt(id, dictionary.DefaultIntBase),
 		Type:         dictionary.SubscribeAccounting,
 		IncludeDeals: includeDeals,
+	}
+
+	body, err := easyjson.Marshal(r)
+	if err != nil {
+		return id, err
 	}
 
 	return id, c.sendMessage(body)
@@ -197,10 +215,15 @@ func (c *Client) SubscribeAccounting(includeDeals bool) (int64, error) {
 func (c *Client) GetOrderBookAndSubscribe(pairs string) (int64, error) {
 	id := atomic.AddInt64(&c.id, 1)
 
-	body := &request.GetOrderBookAndSubscribe{
+	r := &request.GetOrderBookAndSubscribe{
 		ID:   strconv.FormatInt(id, dictionary.DefaultIntBase),
 		Type: dictionary.GetOrderBookAndSubscribe,
 		Pair: pairs,
+	}
+
+	body, err := easyjson.Marshal(r)
+	if err != nil {
+		return id, err
 	}
 
 	return id, c.sendMessage(body)
@@ -209,9 +232,14 @@ func (c *Client) GetOrderBookAndSubscribe(pairs string) (int64, error) {
 func (c *Client) GetPairsAndSubscribe() (int64, error) {
 	id := atomic.AddInt64(&c.id, 1)
 
-	body := &request.GetPairsAndSubscribe{
+	r := &request.GetPairsAndSubscribe{
 		ID:   strconv.FormatInt(id, dictionary.DefaultIntBase),
 		Type: dictionary.GetPairsAndSubscribe,
+	}
+
+	body, err := easyjson.Marshal(r)
+	if err != nil {
+		return id, err
 	}
 
 	return id, c.sendMessage(body)
@@ -220,49 +248,78 @@ func (c *Client) GetPairsAndSubscribe() (int64, error) {
 func (c *Client) CreateOrder(pair, volume, limitPrice string, tradeIntent int) (int64, string, error) {
 	id := atomic.AddInt64(&c.id, 1)
 
-	body := &request.CreateOrder{
-		ID:   strconv.FormatInt(id, dictionary.DefaultIntBase),
-		Type: dictionary.CreateTradeOrder,
-		Fields: &request.CreateOrderFields{
-			Pair:          pair,
-			OrderedVolume: volume,
-			LimitPrice:    limitPrice,
-			TradeIntent:   tradeIntent,
-		},
-		ExternalID: uuid.NewV4().String(),
+	r, ok := c.createOrderPool.Get().(*request.CreateOrder)
+	if !ok {
+		return id, "", dictionary.ErrInterfaceAssertion
 	}
 
-	return id, body.ExternalID, c.sendMessage(body)
+	defer c.createOrderPool.Put(r)
+
+	extID := uuid.NewV4().String()
+
+	r.ID = strconv.FormatInt(id, dictionary.DefaultIntBase)
+	r.Type = dictionary.CreateTradeOrder
+	r.Fields.Pair = pair
+	r.Fields.OrderedVolume = volume
+	r.Fields.LimitPrice = limitPrice
+	r.Fields.TradeIntent = tradeIntent
+
+	r.ExternalID = extID
+
+	body, err := easyjson.Marshal(r)
+	if err != nil {
+		return id, extID, err
+	}
+
+	return id, extID, c.sendMessage(body)
 }
 
 func (c *Client) AlterOrder(pair, volume, limitPrice string, tradeIntent int, orderID int64) (int64, string, error) {
 	id := atomic.AddInt64(&c.id, 1)
 
-	body := &request.AlterTradeOrder{
-		CreateOrder: request.CreateOrder{
-			ID:   strconv.FormatInt(id, dictionary.DefaultIntBase),
-			Type: dictionary.AlterTradeOrder,
-			Fields: &request.CreateOrderFields{
-				Pair:          pair,
-				OrderedVolume: volume,
-				LimitPrice:    limitPrice,
-				TradeIntent:   tradeIntent,
-			},
-		},
-		ExternalID: uuid.NewV4().String(),
-		OrderID:    orderID,
+	r, ok := c.alterOrderPool.Get().(*request.AlterTradeOrder)
+	if !ok {
+		return id, "", dictionary.ErrInterfaceAssertion
 	}
 
-	return id, body.ExternalID, c.sendMessage(body)
+	defer c.alterOrderPool.Put(r)
+
+	extID := uuid.NewV4().String()
+
+	r.CreateOrder.ID = strconv.FormatInt(id, dictionary.DefaultIntBase)
+	r.CreateOrder.Type = dictionary.AlterTradeOrder
+	r.CreateOrder.Fields.Pair = pair
+	r.CreateOrder.Fields.OrderedVolume = volume
+	r.CreateOrder.Fields.LimitPrice = limitPrice
+	r.CreateOrder.Fields.TradeIntent = tradeIntent
+	r.ExternalID = extID
+	r.OrderID = orderID
+
+	body, err := easyjson.Marshal(r)
+	if err != nil {
+		return id, extID, err
+	}
+
+	return id, extID, c.sendMessage(body)
 }
 
 func (c *Client) CancelOrder(orderID int64) (int64, error) {
 	id := atomic.AddInt64(&c.id, 1)
 
-	body := &request.CancelOrder{
-		ID:      strconv.FormatInt(id, dictionary.DefaultIntBase),
-		Type:    dictionary.CancelOrder,
-		OrderID: orderID,
+	r, ok := c.cancelOrderPool.Get().(*request.CancelOrder)
+	if !ok {
+		return id, dictionary.ErrInterfaceAssertion
+	}
+
+	defer c.cancelOrderPool.Put(r)
+
+	r.ID = strconv.FormatInt(id, dictionary.DefaultIntBase)
+	r.Type = dictionary.CancelOrder
+	r.OrderID = orderID
+
+	body, err := easyjson.Marshal(r)
+	if err != nil {
+		return id, err
 	}
 
 	return id, c.sendMessage(body)
@@ -271,10 +328,15 @@ func (c *Client) CancelOrder(orderID int64) (int64, error) {
 func (c *Client) GetOrder(orderID int64) (int64, error) {
 	id := atomic.AddInt64(&c.id, 1)
 
-	body := &request.GetOrder{
+	r := &request.GetOrder{
 		ID:      strconv.FormatInt(id, dictionary.DefaultIntBase),
 		Type:    dictionary.GetOrder,
 		OrderID: orderID,
+	}
+
+	body, err := easyjson.Marshal(r)
+	if err != nil {
+		return id, err
 	}
 
 	return id, c.sendMessage(body)
@@ -283,10 +345,15 @@ func (c *Client) GetOrder(orderID int64) (int64, error) {
 func (c *Client) GetOrderByExtID(extID string) (int64, error) {
 	id := atomic.AddInt64(&c.id, 1)
 
-	body := &request.GetOrder{
+	r := &request.GetOrder{
 		ID:         strconv.FormatInt(id, dictionary.DefaultIntBase),
 		Type:       dictionary.GetOrder,
 		ExternalID: extID,
+	}
+
+	body, err := easyjson.Marshal(r)
+	if err != nil {
+		return id, err
 	}
 
 	return id, c.sendMessage(body)
@@ -295,28 +362,28 @@ func (c *Client) GetOrderByExtID(extID string) (int64, error) {
 func (c *Client) GetBalance() (int64, error) {
 	id := atomic.AddInt64(&c.id, 1)
 
-	body := &request.GetBalance{
+	r := &request.GetBalance{
 		ID:   strconv.FormatInt(id, dictionary.DefaultIntBase),
 		Type: dictionary.GetBalance,
+	}
+
+	body, err := easyjson.Marshal(r)
+	if err != nil {
+		return id, err
 	}
 
 	return id, c.sendMessage(body)
 }
 
-func (c *Client) sendMessage(payload interface{}) error {
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
-	c.logger.Debug().Int("type", websocket.TextMessage).Bytes("body", body).Msg("send")
+func (c *Client) sendMessage(body []byte) error {
+	c.logger.Debug().Int("type", websocket.TextMessage).Bytes("body", body).Msg("send message")
 
 	if c.isClosed.IsNotSet() {
-		c.sendCh <- Msg{Type: websocket.TextMessage, Payload: body}
+		c.sendCh <- request.Msg{Type: websocket.TextMessage, Payload: body}
 	} else {
 		c.logger.Warn().
 			Int("type", websocket.TextMessage).
-			Interface("body", payload).
+			Bytes("body", body).
 			Msg("got message fot sent, but write channel closed")
 	}
 
@@ -342,7 +409,7 @@ func (c *Client) Auth() error {
 
 	er := &response.Error{}
 
-	err = json.Unmarshal(msg, er)
+	err = easyjson.Unmarshal(msg, er)
 	if err != nil {
 		c.logger.Err(err).Msg("unmarshall")
 
@@ -375,10 +442,31 @@ func newConnection(cfg *conf.Bot, logger *zerolog.Logger) (*Client, error) {
 	cli := &Client{
 		cfg:      cfg,
 		conn:     conn,
-		sendCh:   make(chan Msg, writeChSize),
+		sendCh:   make(chan request.Msg, writeChSize),
 		ReadCh:   make(chan []byte, readChSize),
 		logger:   logger,
 		isClosed: abool.New(),
+		createOrderPool: &sync.Pool{
+			New: func() interface{} {
+				return &request.CreateOrder{
+					Fields: &request.CreateOrderFields{},
+				}
+			},
+		},
+		alterOrderPool: &sync.Pool{
+			New: func() interface{} {
+				return &request.AlterTradeOrder{
+					CreateOrder: request.CreateOrder{
+						Fields: &request.CreateOrderFields{},
+					},
+				}
+			},
+		},
+		cancelOrderPool: &sync.Pool{
+			New: func() interface{} {
+				return &request.CancelOrder{}
+			},
+		},
 	}
 
 	return cli, err

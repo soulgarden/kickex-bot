@@ -2,12 +2,13 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
 	"syscall"
 	"time"
+
+	"github.com/mailru/easyjson"
 
 	"github.com/soulgarden/kickex-bot/broker"
 
@@ -91,7 +92,7 @@ func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan<- os.Sign
 
 			rid := &response.ID{}
 
-			err := json.Unmarshal(msg, rid)
+			err := easyjson.Unmarshal(msg, rid)
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
@@ -155,7 +156,7 @@ func (s *Order) UpdateOrderState(ctx context.Context, interrupt chan<- os.Signal
 
 			resp := &response.ID{}
 
-			err := json.Unmarshal(msg, resp)
+			err := easyjson.Unmarshal(msg, resp)
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
@@ -192,7 +193,7 @@ func (s *Order) UpdateOrderState(ctx context.Context, interrupt chan<- os.Signal
 func (s *Order) checkErrorResponse(msg []byte) error {
 	er := &response.Error{}
 
-	err := json.Unmarshal(msg, er)
+	err := easyjson.Unmarshal(msg, er)
 	if err != nil {
 		s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
@@ -223,7 +224,7 @@ func (s *Order) processOrderMsg(msg []byte) (*storage.Order, error) {
 
 	r := &response.GetOrder{}
 
-	err = json.Unmarshal(msg, r)
+	err = easyjson.Unmarshal(msg, r)
 	if err != nil {
 		s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
@@ -265,7 +266,7 @@ func (s *Order) CancelOrder(orderID int64) error {
 			}
 
 			rid := &response.ID{}
-			err := json.Unmarshal(msg, rid)
+			err := easyjson.Unmarshal(msg, rid)
 
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
@@ -284,7 +285,7 @@ func (s *Order) CancelOrder(orderID int64) error {
 
 			er := &response.Error{}
 
-			err = json.Unmarshal(msg, er)
+			err = easyjson.Unmarshal(msg, er)
 			if err != nil {
 				s.logger.Fatal().Err(err).Msg("unmarshall")
 			}

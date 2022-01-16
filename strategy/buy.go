@@ -2,7 +2,6 @@ package strategy
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -11,6 +10,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/mailru/easyjson"
 
 	buySvc "github.com/soulgarden/kickex-bot/service/buy"
 	"github.com/soulgarden/kickex-bot/storage/buy"
@@ -283,7 +284,7 @@ func (s *Buy) listenNewOrders(
 			}
 
 			rid := &response.ID{}
-			err := json.Unmarshal(msg, rid)
+			err := easyjson.Unmarshal(msg, rid)
 
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
@@ -311,7 +312,7 @@ func (s *Buy) listenNewOrders(
 
 			co := &response.CreatedOrder{}
 
-			err = json.Unmarshal(msg, co)
+			err = easyjson.Unmarshal(msg, co)
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
@@ -336,7 +337,7 @@ func (s *Buy) listenNewOrders(
 func (s *Buy) checkListenOrderErrors(msg []byte, sess *buy.Session) (isSkipRequired bool, err error) {
 	er := &response.Error{}
 
-	err = json.Unmarshal(msg, er)
+	err = easyjson.Unmarshal(msg, er)
 	if err != nil {
 		s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
