@@ -4,13 +4,9 @@ import (
 	"context"
 	"fmt"
 	"math/big"
-	"os"
 	"strconv"
-	"sync"
-	"syscall"
 
 	"github.com/mailru/easyjson"
-
 	"github.com/soulgarden/kickex-bot/broker"
 	"github.com/soulgarden/kickex-bot/service"
 
@@ -39,9 +35,7 @@ func NewPairs(
 	return &Pairs{cfg: cfg, storage: storage, eventBroker: eventBroker, wsSvc: wsSvc, logger: logger}
 }
 
-func (s *Pairs) Start(ctx context.Context, interrupt chan<- os.Signal, wg *sync.WaitGroup) {
-	defer wg.Done()
-
+func (s *Pairs) Start(ctx context.Context) error {
 	s.logger.Warn().Msg("pairs subscriber starting...")
 	defer s.logger.Warn().Msg("pairs subscriber stopped")
 
@@ -52,29 +46,23 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan<- os.Signal, wg *sync.
 	if err != nil {
 		s.logger.Err(err).Msg("get pairs and subscribe")
 
-		interrupt <- syscall.SIGINT
-
-		return
+		return err
 	}
 
 	for {
 		select {
 		case e, ok := <-eventsCh:
 			if !ok {
-				s.logger.Warn().Msg("event channel closed")
+				s.logger.Err(dictionary.ErrEventChannelClosed).Msg("event channel closed")
 
-				interrupt <- syscall.SIGINT
-
-				return
+				return dictionary.ErrEventChannelClosed
 			}
 
 			msg, ok := e.([]byte)
 			if !ok {
 				s.logger.Err(dictionary.ErrCantConvertInterfaceToBytes).Msg(dictionary.ErrCantConvertInterfaceToBytes.Error())
 
-				interrupt <- syscall.SIGINT
-
-				return
+				return dictionary.ErrCantConvertInterfaceToBytes
 			}
 
 			rid := &response.ID{}
@@ -83,9 +71,7 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan<- os.Signal, wg *sync.
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
-				interrupt <- syscall.SIGINT
-
-				return
+				return err
 			}
 
 			if strconv.FormatInt(id, dictionary.DefaultIntBase) != rid.ID {
@@ -96,9 +82,7 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan<- os.Signal, wg *sync.
 			if err != nil {
 				s.logger.Err(err).Msg("check error response")
 
-				interrupt <- syscall.SIGINT
-
-				return
+				return err
 			}
 
 			r := &response.Pairs{}
@@ -107,9 +91,7 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan<- os.Signal, wg *sync.
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
-				interrupt <- syscall.SIGINT
-
-				return
+				return err
 			}
 
 			pairs := []*storage.Pair{}
@@ -137,9 +119,7 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan<- os.Signal, wg *sync.
 						Str("val", pair.MinVolume).
 						Msg("parse string as float")
 
-					interrupt <- syscall.SIGINT
-
-					return
+					return dictionary.ErrParseFloat
 				}
 
 				p.MinVolume = minVolume
@@ -150,9 +130,7 @@ func (s *Pairs) Start(ctx context.Context, interrupt chan<- os.Signal, wg *sync.
 			s.storage.UpdatePairs(pairs)
 
 		case <-ctx.Done():
-			interrupt <- syscall.SIGINT
-
-			return
+			return ctx.Err()
 		}
 	}
 }

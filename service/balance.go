@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
-	"os"
 	"strconv"
-	"syscall"
 	"time"
 
 	"github.com/mailru/easyjson"
@@ -44,15 +42,13 @@ func NewBalance(
 	}
 }
 
-func (s *Balance) GetBalance(ctx context.Context, interrupt chan<- os.Signal) error {
+func (s *Balance) GetBalance(ctx context.Context) error {
 	eventsCh := s.eventBroker.Subscribe("get balance")
 	defer s.eventBroker.Unsubscribe(eventsCh)
 
 	id, err := s.wsSvc.GetBalance()
 	if err != nil {
-		s.logger.Warn().Msg("get balance")
-
-		interrupt <- syscall.SIGINT
+		s.logger.Err(err).Msg("get balance")
 
 		return err
 	}
@@ -61,18 +57,14 @@ func (s *Balance) GetBalance(ctx context.Context, interrupt chan<- os.Signal) er
 		select {
 		case e, ok := <-eventsCh:
 			if !ok {
-				s.logger.Warn().Msg("event channel closed")
+				s.logger.Err(dictionary.ErrEventChannelClosed).Msg("event channel closed")
 
-				interrupt <- syscall.SIGINT
-
-				return nil
+				return dictionary.ErrEventChannelClosed
 			}
 
 			msg, ok := e.([]byte)
 			if !ok {
 				s.logger.Err(dictionary.ErrCantConvertInterfaceToBytes).Msg(dictionary.ErrCantConvertInterfaceToBytes.Error())
-
-				interrupt <- syscall.SIGINT
 
 				return dictionary.ErrCantConvertInterfaceToBytes
 			}
@@ -82,8 +74,6 @@ func (s *Balance) GetBalance(ctx context.Context, interrupt chan<- os.Signal) er
 			err := easyjson.Unmarshal(msg, rid)
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
-
-				interrupt <- syscall.SIGINT
 
 				return err
 			}
@@ -100,8 +90,6 @@ func (s *Balance) GetBalance(ctx context.Context, interrupt chan<- os.Signal) er
 			if err != nil {
 				s.logger.Err(err).Msg("check error response")
 
-				interrupt <- syscall.SIGINT
-
 				return err
 			}
 
@@ -111,16 +99,12 @@ func (s *Balance) GetBalance(ctx context.Context, interrupt chan<- os.Signal) er
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
-				interrupt <- syscall.SIGINT
-
 				return err
 			}
 
 			err = s.UpdateStorageBalances(r.Balance)
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
-
-				interrupt <- syscall.SIGINT
 
 				return err
 			}

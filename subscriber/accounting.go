@@ -3,11 +3,8 @@ package subscriber
 import (
 	"context"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
-	"sync"
-	"syscall"
 
 	"github.com/mailru/easyjson"
 
@@ -53,11 +50,7 @@ func NewAccounting(
 	}
 }
 
-func (s *Accounting) Start(ctx context.Context, interrupt chan<- os.Signal, wg *sync.WaitGroup) {
-	defer func() {
-		wg.Done()
-	}()
-
+func (s *Accounting) Start(ctx context.Context) error {
 	s.logger.Warn().Msg("accounting subscriber starting...")
 	defer s.logger.Warn().Msg("accounting subscriber stopped")
 
@@ -67,29 +60,24 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan<- os.Signal, wg *
 	id, err := s.wsSvc.SubscribeAccounting(false)
 	if err != nil {
 		s.logger.Err(err).Msg("subscribe accounting")
-		interrupt <- syscall.SIGINT
 
-		return
+		return err
 	}
 
 	for {
 		select {
 		case e, ok := <-eventsCh:
 			if !ok {
-				s.logger.Warn().Msg("event channel closed")
+				s.logger.Err(dictionary.ErrEventChannelClosed).Msg("event channel closed")
 
-				interrupt <- syscall.SIGINT
-
-				return
+				return dictionary.ErrEventChannelClosed
 			}
 
 			msg, ok := e.([]byte)
 			if !ok {
 				s.logger.Err(dictionary.ErrCantConvertInterfaceToBytes).Msg(dictionary.ErrCantConvertInterfaceToBytes.Error())
 
-				interrupt <- syscall.SIGINT
-
-				return
+				return dictionary.ErrCantConvertInterfaceToBytes
 			}
 
 			rid := &response.ID{}
@@ -98,9 +86,7 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan<- os.Signal, wg *
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
-				interrupt <- syscall.SIGINT
-
-				return
+				return err
 			}
 
 			if strconv.FormatInt(id, dictionary.DefaultIntBase) != rid.ID {
@@ -115,9 +101,7 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan<- os.Signal, wg *
 			if err != nil {
 				s.logger.Err(err).Msg("check error response")
 
-				interrupt <- syscall.SIGINT
-
-				return
+				return err
 			}
 
 			r := &response.AccountingUpdates{}
@@ -126,9 +110,7 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan<- os.Signal, wg *
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
-				interrupt <- syscall.SIGINT
-
-				return
+				return err
 			}
 
 			for _, order := range r.Orders {
@@ -136,9 +118,7 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan<- os.Signal, wg *
 				if err != nil {
 					s.logger.Err(err).Msg("new order by response")
 
-					interrupt <- syscall.SIGINT
-
-					return
+					return err
 				}
 
 				s.storage.UpsertUserOrder(o)
@@ -154,17 +134,13 @@ func (s *Accounting) Start(ctx context.Context, interrupt chan<- os.Signal, wg *
 			if err != nil {
 				s.logger.Err(err).Msg("update storage balances")
 
-				interrupt <- syscall.SIGINT
-
-				return
+				return err
 			}
 
 			s.storage.AppendDeals(r.Deals...)
 			s.accEventBroker.Publish(true)
 		case <-ctx.Done():
-			interrupt <- syscall.SIGINT
-
-			return
+			return ctx.Err()
 		}
 	}
 }

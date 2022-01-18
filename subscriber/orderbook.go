@@ -4,10 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
-	"os"
 	"strconv"
-	"sync"
-	"syscall"
 
 	"github.com/mailru/easyjson"
 
@@ -52,11 +49,7 @@ func NewOrderBook(
 	}
 }
 
-func (s *OrderBook) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan<- os.Signal) {
-	defer func() {
-		wg.Done()
-	}()
-
+func (s *OrderBook) Start(ctx context.Context) error {
 	s.logger.Warn().Str("pair", s.pair.GetPairName()).Msg("order book subscriber starting...")
 	defer s.logger.Warn().Str("pair", s.pair.GetPairName()).Msg("order book subscriber stopped")
 
@@ -67,29 +60,23 @@ func (s *OrderBook) Start(ctx context.Context, wg *sync.WaitGroup, interrupt cha
 	if err != nil {
 		s.logger.Err(err).Msg("get order book and subscribe")
 
-		interrupt <- syscall.SIGINT
-
-		return
+		return err
 	}
 
 	for {
 		select {
 		case e, ok := <-eventsCh:
 			if !ok {
-				s.logger.Warn().Msg("event channel closed")
+				s.logger.Err(dictionary.ErrEventChannelClosed).Msg("event channel closed")
 
-				interrupt <- syscall.SIGINT
-
-				return
+				return dictionary.ErrEventChannelClosed
 			}
 
 			msg, ok := e.([]byte)
 			if !ok {
 				s.logger.Err(dictionary.ErrCantConvertInterfaceToBytes).Msg(dictionary.ErrCantConvertInterfaceToBytes.Error())
 
-				interrupt <- syscall.SIGINT
-
-				return
+				return dictionary.ErrCantConvertInterfaceToBytes
 			}
 
 			rid := &response.ID{}
@@ -98,9 +85,7 @@ func (s *OrderBook) Start(ctx context.Context, wg *sync.WaitGroup, interrupt cha
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
-				interrupt <- syscall.SIGINT
-
-				return
+				return err
 			}
 
 			if strconv.FormatInt(id, dictionary.DefaultIntBase) != rid.ID {
@@ -113,9 +98,7 @@ func (s *OrderBook) Start(ctx context.Context, wg *sync.WaitGroup, interrupt cha
 			if err != nil {
 				s.logger.Err(err).Msg("check error response")
 
-				interrupt <- syscall.SIGINT
-
-				return
+				return err
 			}
 
 			r := &response.BookResponse{}
@@ -124,9 +107,7 @@ func (s *OrderBook) Start(ctx context.Context, wg *sync.WaitGroup, interrupt cha
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
-				interrupt <- syscall.SIGINT
-
-				return
+				return err
 			}
 
 			s.orderBook.LastPrice = r.LastPrice.Price
@@ -135,25 +116,21 @@ func (s *OrderBook) Start(ctx context.Context, wg *sync.WaitGroup, interrupt cha
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("update max bid price")
 
-				interrupt <- syscall.SIGINT
-
-				return
+				return err
 			}
 
 			err = s.updateAsks(r)
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("update min ask price")
 
-				interrupt <- syscall.SIGINT
-
-				return
+				return err
 			}
 
 			s.updateSpread()
 
-			s.orderBook.OrderBookEventBroker.Publish(0)
+			s.orderBook.OrderBookEventBroker.Publish(struct{}{})
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		}
 	}
 }

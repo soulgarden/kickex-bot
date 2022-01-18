@@ -3,9 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
-	"os"
 	"strconv"
-	"syscall"
 	"time"
 
 	"github.com/mailru/easyjson"
@@ -40,7 +38,7 @@ func NewOrder(
 	return &Order{cfg: cfg, storage: storage, wsEventBroker: wsEventBroker, wsSvc: wsSvc, logger: logger}
 }
 
-func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan<- os.Signal) error {
+func (s *Order) UpdateOrdersStates(ctx context.Context) error {
 	s.logger.Warn().Msg("order states updater starting...")
 	defer s.logger.Warn().Msg("order states updater stopped")
 
@@ -60,8 +58,6 @@ func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan<- os.Sign
 		if err != nil {
 			s.logger.Err(err).Msg("get order")
 
-			interrupt <- syscall.SIGINT
-
 			return err
 		}
 
@@ -74,18 +70,14 @@ func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan<- os.Sign
 		select {
 		case e, ok := <-eventsCh:
 			if !ok {
-				s.logger.Warn().Msg("event channel closed")
+				s.logger.Err(dictionary.ErrEventChannelClosed).Msg("event channel closed")
 
-				interrupt <- syscall.SIGINT
-
-				return nil
+				return dictionary.ErrEventChannelClosed
 			}
 
 			msg, ok := e.([]byte)
 			if !ok {
 				s.logger.Err(dictionary.ErrCantConvertInterfaceToBytes).Msg(dictionary.ErrCantConvertInterfaceToBytes.Error())
-
-				interrupt <- syscall.SIGINT
 
 				return dictionary.ErrCantConvertInterfaceToBytes
 			}
@@ -95,8 +87,6 @@ func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan<- os.Sign
 			err := easyjson.Unmarshal(msg, rid)
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
-
-				interrupt <- syscall.SIGINT
 
 				return err
 			}
@@ -108,8 +98,6 @@ func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan<- os.Sign
 			_, err = s.processOrderMsg(msg)
 			if err != nil {
 				s.logger.Err(err).Msg("process order msg")
-
-				interrupt <- syscall.SIGINT
 
 				return err
 			}
@@ -130,7 +118,7 @@ func (s *Order) UpdateOrdersStates(ctx context.Context, interrupt chan<- os.Sign
 	}
 }
 
-func (s *Order) UpdateOrderState(ctx context.Context, interrupt chan<- os.Signal, rid int64) (*storage.Order, error) {
+func (s *Order) UpdateOrderState(ctx context.Context, rid int64) (*storage.Order, error) {
 	eventsCh := s.wsEventBroker.Subscribe("update order state")
 	defer s.wsEventBroker.Unsubscribe(eventsCh)
 
@@ -138,18 +126,14 @@ func (s *Order) UpdateOrderState(ctx context.Context, interrupt chan<- os.Signal
 		select {
 		case e, ok := <-eventsCh:
 			if !ok {
-				s.logger.Warn().Msg("event channel closed")
+				s.logger.Err(dictionary.ErrEventChannelClosed).Msg("event channel closed")
 
-				interrupt <- syscall.SIGINT
-
-				return nil, nil
+				return nil, dictionary.ErrEventChannelClosed
 			}
 
 			msg, ok := e.([]byte)
 			if !ok {
 				s.logger.Err(dictionary.ErrCantConvertInterfaceToBytes).Msg(dictionary.ErrCantConvertInterfaceToBytes.Error())
-
-				interrupt <- syscall.SIGINT
 
 				return nil, dictionary.ErrCantConvertInterfaceToBytes
 			}
@@ -160,9 +144,7 @@ func (s *Order) UpdateOrderState(ctx context.Context, interrupt chan<- os.Signal
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
 
-				interrupt <- syscall.SIGINT
-
-				return nil, nil
+				return nil, err
 			}
 
 			if strconv.FormatInt(rid, dictionary.ExtendedPrecision) != resp.ID {
@@ -173,13 +155,10 @@ func (s *Order) UpdateOrderState(ctx context.Context, interrupt chan<- os.Signal
 			if err != nil {
 				s.logger.Err(err).Msg("process order msg")
 
-				interrupt <- syscall.SIGINT
-
 				return nil, err
 			}
 
 			return o, nil
-
 		case <-ctx.Done():
 			return nil, nil
 		case <-time.After(time.Minute):
@@ -254,7 +233,9 @@ func (s *Order) CancelOrder(orderID int64) error {
 
 	id, err := s.wsSvc.CancelOrder(orderID)
 	if err != nil {
-		s.logger.Fatal().Int64("oid", orderID).Msg("cancel order")
+		s.logger.Err(err).Int64("oid", orderID).Msg("cancel order")
+
+		return err
 	}
 
 	for {
@@ -287,7 +268,9 @@ func (s *Order) CancelOrder(orderID int64) error {
 
 			err = easyjson.Unmarshal(msg, er)
 			if err != nil {
-				s.logger.Fatal().Err(err).Msg("unmarshall")
+				s.logger.Err(err).Msg("unmarshall")
+
+				return err
 			}
 
 			if er.Error != nil {
@@ -315,15 +298,19 @@ func (s *Order) CancelOrder(orderID int64) error {
 	}
 }
 
-func (s *Order) SendCancelOrderRequest(orderID int64) {
+func (s *Order) SendCancelOrderRequest(orderID int64) error {
 	_, err := s.wsSvc.CancelOrder(orderID)
 	if err != nil {
-		s.logger.Fatal().
+		s.logger.Err(err).
 			Int64("oid", orderID).
 			Msg("send cancel order request")
+
+		return err
 	}
 
 	s.logger.Warn().
 		Int64("oid", orderID).
 		Msg("send cancel order request")
+
+	return nil
 }

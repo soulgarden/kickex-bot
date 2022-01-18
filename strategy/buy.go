@@ -5,11 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"os"
 	"strconv"
-	"sync"
-	"syscall"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/mailru/easyjson"
 
@@ -115,75 +114,85 @@ func NewBuy(
 	}, nil
 }
 
-func (s *Buy) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan<- os.Signal) {
-	defer func() {
-		wg.Done()
-	}()
-
+func (s *Buy) Start(ctx context.Context, g *errgroup.Group) error {
 	s.logger.Warn().Str("pair", s.pair.GetPairName()).Msg("buy manager starting...")
 	defer s.logger.Warn().Str("pair", s.pair.GetPairName()).Msg("buy manager stopped")
+
+	ticker := time.NewTicker(buySessCreationInterval)
+	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			s.logger.Warn().Str("pair", s.pair.GetPairName()).Msg("cleanup active orders starting")
-			s.cleanUpActiveOrders()
+
+			if err := s.cleanUpActiveOrders(); err != nil {
+				s.logger.Err(err).Msg("cleanup active orders")
+
+				return err
+			}
+
 			s.logger.Warn().Str("pair", s.pair.GetPairName()).Msg("cleanup active orders finished")
 
-			return
-		case <-time.After(buySessCreationInterval):
+			return nil
+		case <-ticker.C:
 			if s.orderBook.BuyActiveSessionID.Load() != "" {
 				continue
 			}
 
-			go s.CreateSession(ctx, interrupt)
+			g.Go(func() error { return s.CreateSession(ctx, g) })
 		}
 	}
 }
 
-func (s *Buy) CreateSession(ctx context.Context, interrupt chan<- os.Signal) {
+func (s *Buy) CreateSession(ctx context.Context, g *errgroup.Group) error {
 	volume, err := s.getStartBuyVolume()
 	if err != nil {
 		s.logger.Err(err).Msg("get start buy volume")
 
-		interrupt <- syscall.SIGINT
-
-		return
+		return err
 	}
 
 	sessCtx, cancel := context.WithCancel(ctx)
+
+	defer cancel()
 
 	sess := s.orderBook.NewBuySession(volume)
 
 	s.logger.Warn().Str("id", sess.ID).Str("pair", s.pair.GetPairName()).Msg("start session")
 
-	s.processSession(sessCtx, sess, interrupt)
-	s.logger.Warn().Str("id", sess.ID).Str("pair", s.pair.GetPairName()).Msg("session finished")
+	err = s.processSession(sessCtx, g, sess)
+	s.logger.Err(err).
+		Str("id", sess.ID).
+		Str("pair", s.pair.GetPairName()).
+		Msg("session finished")
 
 	if s.orderBook.BuyActiveSessionID.Load() == sess.ID {
 		s.orderBook.BuyActiveSessionID.Store("")
 	}
 
-	cancel()
+	return nil
 }
 
 func (s *Buy) processSession(
 	ctx context.Context,
+	g *errgroup.Group,
 	sess *buy.Session,
-	interrupt chan<- os.Signal,
-) {
-	go func() {
-		if err := s.listenNewOrders(ctx, interrupt, sess); err != nil {
+) error {
+	g.Go(func() error {
+		if err := s.listenNewOrders(ctx, g, sess); err != nil {
 			s.logger.Err(err).Str("id", sess.ID).Msg("listen new orders")
 
-			interrupt <- syscall.SIGINT
+			return err
 		}
-	}()
 
-	s.orderCreationDecider(ctx, sess, interrupt)
+		return nil
+	})
+
+	return s.orderCreationDecider(ctx, sess)
 }
 
-func (s *Buy) orderCreationDecider(ctx context.Context, sess *buy.Session, interrupt chan<- os.Signal) {
+func (s *Buy) orderCreationDecider(ctx context.Context, sess *buy.Session) error {
 	s.logger.Warn().
 		Str("id", sess.ID).
 		Str("pair", s.pair.GetPairName()).
@@ -201,7 +210,7 @@ func (s *Buy) orderCreationDecider(ctx context.Context, sess *buy.Session, inter
 		select {
 		case <-e:
 			if sess.GetIsDone() {
-				return
+				return nil
 			}
 
 			isBuyAvailable := s.isBuyOrderCreationAvailable(sess, false)
@@ -214,13 +223,11 @@ func (s *Buy) orderCreationDecider(ctx context.Context, sess *buy.Session, inter
 						continue
 					}
 
-					interrupt <- syscall.SIGINT
-
-					return
+					return err
 				}
 			}
 		case <-ctx.Done():
-			return
+			return nil
 		}
 	}
 }
@@ -251,7 +258,7 @@ func (s *Buy) isBuyOrderCreationAvailable(sess *buy.Session, force bool) bool {
 
 func (s *Buy) listenNewOrders(
 	ctx context.Context,
-	interrupt chan<- os.Signal,
+	g *errgroup.Group,
 	sess *buy.Session,
 ) error {
 	s.logger.Warn().
@@ -278,8 +285,6 @@ func (s *Buy) listenNewOrders(
 
 			msg, ok := e.([]byte)
 			if !ok {
-				interrupt <- syscall.SIGINT
-
 				return dictionary.ErrCantConvertInterfaceToBytes
 			}
 
@@ -288,7 +293,6 @@ func (s *Buy) listenNewOrders(
 
 			if err != nil {
 				s.logger.Err(err).Bytes("msg", msg).Msg("unmarshall")
-				interrupt <- syscall.SIGINT
 
 				return err
 			}
@@ -326,7 +330,7 @@ func (s *Buy) listenNewOrders(
 				sess.AddBuyOrder(co.OrderID)
 			}
 
-			go s.watchOrder(ctx, interrupt, sess, co.OrderID)
+			g.Go(func() error { return s.watchOrder(ctx, sess, co.OrderID) })
 
 		case <-ctx.Done():
 			return nil
@@ -355,7 +359,11 @@ func (s *Buy) checkListenOrderErrors(msg []byte, sess *buy.Session) (isSkipRequi
 					Str("ext oid", sess.GetActiveBuyExtOrderID()).
 					Msg("consider prev buy order as executed")
 
-				s.setBuyOrderExecutedFlags(sess, s.storage.GetUserOrder(sess.GetPrevBuyOrderID()))
+				if err = s.setBuyOrderExecutedFlags(sess, s.storage.GetUserOrder(sess.GetPrevBuyOrderID())); err != nil {
+					s.logger.Err(err).Int64("oid", sess.GetPrevBuyOrderID()).Msg("set buy order executed flags")
+
+					return false, err
+				}
 			}
 
 			return true, nil
@@ -384,7 +392,11 @@ func (s *Buy) checkListenOrderErrors(msg []byte, sess *buy.Session) (isSkipRequi
 						Str("ext oid", sess.GetActiveBuyExtOrderID()).
 						Msg("altered buy order already done")
 
-					s.setBuyOrderExecutedFlags(sess, s.storage.GetUserOrder(sess.GetPrevBuyOrderID()))
+					if err = s.setBuyOrderExecutedFlags(sess, s.storage.GetUserOrder(sess.GetPrevBuyOrderID())); err != nil {
+						s.logger.Err(err).Int64("oid", sess.GetPrevBuyOrderID()).Msg("set buy order executed flags")
+
+						return false, err
+					}
 
 					return true, nil
 				}
@@ -443,7 +455,7 @@ func (s *Buy) createBuyOrder(sess *buy.Session) error {
 	return nil
 }
 
-func (s *Buy) watchOrder(ctx context.Context, interrupt chan<- os.Signal, sess *buy.Session, orderID int64) {
+func (s *Buy) watchOrder(ctx context.Context, sess *buy.Session, orderID int64) error {
 	s.logger.Warn().
 		Str("id", sess.ID).
 		Str("pair", s.pair.GetPairName()).
@@ -472,42 +484,35 @@ func (s *Buy) watchOrder(ctx context.Context, interrupt chan<- os.Signal, sess *
 			if !ok {
 				s.logger.Err(dictionary.ErrEventChannelClosed).Msg("event channel closed")
 
-				interrupt <- syscall.SIGINT
-
-				return
+				return dictionary.ErrEventChannelClosed
 			}
 
-			hasFinalState, err := s.checkOrderState(ctx, interrupt, orderID, sess, &startedTime)
+			hasFinalState, err := s.checkOrderState(ctx, orderID, sess, &startedTime)
 			if err != nil {
-				interrupt <- syscall.SIGINT
-
-				return
+				return err
 			}
 
 			if hasFinalState {
-				return
+				return nil
 			}
 		case <-bookEventCh:
-			hasFinalState, err := s.checkOrderState(ctx, interrupt, orderID, sess, &startedTime)
+			hasFinalState, err := s.checkOrderState(ctx, orderID, sess, &startedTime)
 			if err != nil {
-				interrupt <- syscall.SIGINT
-
-				return
+				return err
 			}
 
 			if hasFinalState {
-				return
+				return nil
 			}
 
 		case <-ctx.Done():
-			return
+			return nil
 		}
 	}
 }
 
 func (s *Buy) checkOrderState(
 	ctx context.Context,
-	interrupt chan<- os.Signal,
 	orderID int64,
 	sess *buy.Session,
 	startedTime *time.Time,
@@ -520,14 +525,12 @@ func (s *Buy) checkOrderState(
 		if startedTime.Add(orderCreationDuration).Before(time.Now()) {
 			s.logger.Err(dictionary.ErrOrderCreationEventNotReceived).Msg("order creation event not received")
 
-			err := s.updateOrderStateByID(ctx, interrupt, orderID)
+			err := s.updateOrderStateByID(ctx, orderID)
 			if err != nil {
 				s.logger.Err(err).
 					Str("id", sess.ID).
 					Int64("oid", sess.GetActiveBuyOrderID()).
 					Msg("update buy order state by id")
-
-				interrupt <- syscall.SIGINT
 
 				return false, err
 			}
@@ -553,7 +556,11 @@ func (s *Buy) checkOrderState(
 			Msg("buy order reached final state")
 
 		if order.State == dictionary.StateDone {
-			s.setBuyOrderExecutedFlags(sess, order)
+			if err = s.setBuyOrderExecutedFlags(sess, order); err != nil {
+				s.logger.Err(err).Int64("oid", order.ID).Msg("set buy order executed flags")
+
+				return false, err
+			}
 
 			return true, nil
 		}
@@ -588,16 +595,18 @@ func (s *Buy) checkOrderState(
 					Int64("oid", orderID).
 					Msg("expected cancelled state, but got done")
 
-				s.orderBook.OrderBookEventBroker.Publish(0)
+				s.orderBook.OrderBookEventBroker.Publish(struct{}{})
 
 				return false, nil
 			}
 
-			s.logger.Fatal().
+			s.logger.Err(err).
 				Str("id", sess.ID).
 				Str("pair", s.pair.GetPairName()).
 				Int64("oid", orderID).
 				Msg("cancel buy order")
+
+			return false, err
 		}
 
 		sess.SetPrevBuyOrderID(orderID)
@@ -613,18 +622,20 @@ func (s *Buy) checkOrderState(
 		if isBuyAvailable {
 			rid, extID, err := s.moveBuyOrder(sess)
 			if err != nil {
-				s.logger.Fatal().
+				s.logger.
 					Err(err).
 					Str("id", sess.ID).
 					Int64("oid", order.ID).
 					Msg("move buy order")
+
+				return false, err
 			}
 
 			sess.SetPrevBuyOrderID(orderID)
 			sess.SetActiveBuyExtOrderID(extID)
 			sess.SetActiveBuyOrderRequestID(strconv.FormatInt(rid, dictionary.DefaultIntBase))
 
-			s.orderBook.OrderBookEventBroker.Publish(0) // don't wait change order book
+			s.orderBook.OrderBookEventBroker.Publish(struct{}{}) // don't wait change order book
 		} else {
 			err := s.orderSvc.CancelOrder(orderID)
 			if err != nil {
@@ -635,19 +646,21 @@ func (s *Buy) checkOrderState(
 						Int64("oid", orderID).
 						Msg("expected cancelled buy order state, but got done")
 
-					s.orderBook.OrderBookEventBroker.Publish(0)
+					s.orderBook.OrderBookEventBroker.Publish(struct{}{})
 
 					return false, nil
 				}
 
-				s.logger.Fatal().Int64("oid", orderID).Msg("cancel buy order for move")
+				s.logger.Err(err).Int64("oid", orderID).Msg("cancel buy order for move")
+
+				return false, err
 			}
 
 			sess.SetPrevBuyOrderID(orderID)
 			sess.SetActiveBuyOrderID(0)
 			sess.SetIsNeedToCreateBuyOrder(true)
 
-			s.orderBook.OrderBookEventBroker.Publish(0) // don't wait change order book
+			s.orderBook.OrderBookEventBroker.Publish(struct{}{}) // don't wait change order book
 		}
 
 		return true, nil
@@ -708,7 +721,7 @@ func (s *Buy) moveBuyOrder(sess *buy.Session) (int64, string, error) {
 	return id, extID, nil
 }
 
-func (s *Buy) setBuyOrderExecutedFlags(sess *buy.Session, order *storage.Order) {
+func (s *Buy) setBuyOrderExecutedFlags(sess *buy.Session, order *storage.Order) error {
 	if order.State == dictionary.StateActive {
 		err := s.orderSvc.CancelOrder(order.ID)
 		if err != nil {
@@ -720,12 +733,14 @@ func (s *Buy) setBuyOrderExecutedFlags(sess *buy.Session, order *storage.Order) 
 					Msg("expected cancelled state, but got done")
 			}
 
-			s.logger.Fatal().
+			s.logger.
 				Err(err).
 				Str("id", sess.ID).
 				Str("pair", s.pair.GetPairName()).
 				Int64("oid", order.ID).
 				Msg("cancel buy order")
+
+			return err
 		}
 	}
 
@@ -733,30 +748,14 @@ func (s *Buy) setBuyOrderExecutedFlags(sess *buy.Session, order *storage.Order) 
 	s.orderBook.AddBoughtCost(s.sessSvc.GetSessTotalBoughtCost(sess))
 	s.orderBook.AddBoughtVolume(s.sessSvc.GetSessTotalBoughtVolume(sess))
 
-	s.orderBook.OrderBookEventBroker.Publish(0)
+	s.orderBook.OrderBookEventBroker.Publish(struct{}{})
 
-	s.tgSvc.SendAsync(fmt.Sprintf(
-		`env: %s,
-buy order reached done state,
-pair: %s,
-id: %d,
-price: %s,
-volume: %s,
-cost: %s,
-total bought cost: %s,
-total bought volume %s`,
-		s.cfg.Env,
-		s.pair.GetPairName(),
-		order.ID,
-		order.LimitPrice.Text('f', s.pair.PriceScale),
-		s.sessSvc.GetSessTotalBoughtVolume(sess).Text('f', s.pair.QuantityScale),
-		s.sessSvc.GetSessTotalBoughtCost(sess).Text('f', s.pair.PriceScale),
-		s.orderBook.GetBoughtCost().Text('f', s.pair.PriceScale),
-		s.orderBook.GetBoughtVolume().Text('f', s.pair.QuantityScale),
-	))
+	s.sendTGBuyOrderReachedDoneState(sess, order)
+
+	return nil
 }
 
-func (s *Buy) cleanUpActiveOrders() {
+func (s *Buy) cleanUpActiveOrders() error {
 	for _, sess := range s.orderBook.SpreadSessions {
 		if sess.GetIsDone() {
 			continue
@@ -765,11 +764,12 @@ func (s *Buy) cleanUpActiveOrders() {
 		if sess.GetActiveBuyOrderID() > 1 {
 			if o := s.storage.GetUserOrder(sess.GetActiveBuyOrderID()); o != nil &&
 				o.State < dictionary.StateDone {
-				_, err := s.wsSvc.CancelOrder(sess.GetActiveBuyOrderID())
-				if err != nil {
-					s.logger.Fatal().
+				if _, err := s.wsSvc.CancelOrder(sess.GetActiveBuyOrderID()); err != nil {
+					s.logger.Err(err).
 						Int64("oid", sess.GetActiveBuyOrderID()).
 						Msg("send cancel buy order request")
+
+					return err
 				}
 
 				s.logger.Warn().
@@ -778,6 +778,8 @@ func (s *Buy) cleanUpActiveOrders() {
 			}
 		}
 	}
+
+	return nil
 }
 
 func (s *Buy) getStartBuyVolume() (*big.Float, error) {
@@ -844,7 +846,7 @@ func (s *Buy) isMoveBuyOrderRequired(sess *buy.Session, o *storage.Order) bool {
 	return true
 }
 
-func (s *Buy) updateOrderStateByID(ctx context.Context, interrupt chan<- os.Signal, oid int64) error {
+func (s *Buy) updateOrderStateByID(ctx context.Context, oid int64) error {
 	rid, err := s.wsSvc.GetOrder(oid)
 	if err != nil {
 		s.logger.Err(err).Int64("oid", oid).Msg("send get order by id request")
@@ -852,7 +854,7 @@ func (s *Buy) updateOrderStateByID(ctx context.Context, interrupt chan<- os.Sign
 		return err
 	}
 
-	o, err := s.orderSvc.UpdateOrderState(ctx, interrupt, rid)
+	o, err := s.orderSvc.UpdateOrderState(ctx, rid)
 	if err != nil || o == nil {
 		s.logger.Err(err).
 			Int64("oid", oid).
@@ -862,4 +864,26 @@ func (s *Buy) updateOrderStateByID(ctx context.Context, interrupt chan<- os.Sign
 	}
 
 	return nil
+}
+
+func (s *Buy) sendTGBuyOrderReachedDoneState(sess *buy.Session, order *storage.Order) {
+	s.tgSvc.SendAsync(fmt.Sprintf(
+		`env: %s,
+buy order reached done state,
+pair: %s,
+id: %d,
+price: %s,
+volume: %s,
+cost: %s,
+total bought cost: %s,
+total bought volume %s`,
+		s.cfg.Env,
+		s.pair.GetPairName(),
+		order.ID,
+		order.LimitPrice.Text('f', s.pair.PriceScale),
+		s.sessSvc.GetSessTotalBoughtVolume(sess).Text('f', s.pair.QuantityScale),
+		s.sessSvc.GetSessTotalBoughtCost(sess).Text('f', s.pair.PriceScale),
+		s.orderBook.GetBoughtCost().Text('f', s.pair.PriceScale),
+		s.orderBook.GetBoughtVolume().Text('f', s.pair.QuantityScale),
+	))
 }

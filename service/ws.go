@@ -2,13 +2,13 @@ package service
 
 import (
 	"context"
-	"os"
-	"syscall"
 
 	"github.com/rs/zerolog"
 	"github.com/soulgarden/kickex-bot/broker"
 	"github.com/soulgarden/kickex-bot/client"
 	"github.com/soulgarden/kickex-bot/conf"
+	"github.com/soulgarden/kickex-bot/dictionary"
+	"golang.org/x/sync/errgroup"
 )
 
 type WS struct {
@@ -22,14 +22,12 @@ func NewWS(cfg *conf.Bot, eventBroker *broker.Broker, logger *zerolog.Logger) *W
 	return &WS{cfg: cfg, eventBroker: eventBroker, logger: logger}
 }
 
-func (s *WS) Connect(interrupt chan<- os.Signal) error {
+func (s *WS) Connect(g *errgroup.Group) error {
 	var err error
 
-	s.cli, err = client.NewWsCli(s.cfg, interrupt, s.logger)
+	s.cli, err = client.NewWsCli(s.cfg, g, s.logger)
 	if err != nil {
 		s.logger.Err(err).Msg("connection error")
-
-		interrupt <- syscall.SIGINT
 
 		return err
 	}
@@ -38,32 +36,29 @@ func (s *WS) Connect(interrupt chan<- os.Signal) error {
 	if err != nil {
 		s.logger.Err(err).Msg("auth error")
 
-		interrupt <- syscall.SIGINT
-
 		return err
 	}
 
 	return nil
 }
 
-func (s *WS) Start(ctx context.Context, interrupt chan<- os.Signal) {
-	var err error
+func (s *WS) Start(ctx context.Context) error {
+	s.logger.Warn().Msg("start listen ws")
+	defer s.logger.Warn().Msg("stop listen ws")
 
 	for {
 		select {
 		case msg, ok := <-s.cli.ReadCh:
 			if !ok {
-				s.logger.Err(err).Msg("read channel closed")
+				s.logger.Err(dictionary.ErrWsReadChannelClosed).Msg("read channel closed")
 
-				interrupt <- syscall.SIGINT
-
-				return
+				return dictionary.ErrWsReadChannelClosed
 			}
 
 			s.eventBroker.Publish(msg)
 
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		}
 	}
 }

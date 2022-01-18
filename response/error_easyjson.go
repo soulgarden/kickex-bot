@@ -38,7 +38,7 @@ func easyjsonE34310f8DecodeGithubComSoulgardenKickexBotResponse(in *jlexer.Lexer
 		switch key {
 		case "id":
 			out.ID = string(in.String())
-		case "Error":
+		case "error":
 			if in.IsNull() {
 				in.Skip()
 				out.Error = nil
@@ -68,7 +68,7 @@ func easyjsonE34310f8EncodeGithubComSoulgardenKickexBotResponse(out *jwriter.Wri
 		out.String(string(in.ID))
 	}
 	{
-		const prefix string = ",\"Error\":"
+		const prefix string = ",\"error\":"
 		out.RawString(prefix)
 		if in.Error == nil {
 			out.RawString("null")

@@ -3,8 +3,9 @@ package service
 import (
 	"time"
 
-	"github.com/rs/zerolog"
 	"github.com/soulgarden/kickex-bot/conf"
+
+	"github.com/rs/zerolog"
 	tb "gopkg.in/tucnak/telebot.v2"
 )
 
@@ -15,27 +16,16 @@ type Telegram struct {
 	cfg    *conf.Bot
 	logger *zerolog.Logger
 	bot    *tb.Bot
-
 	sendCh chan string
 }
 
-func NewTelegram(cfg *conf.Bot, logger *zerolog.Logger) (*Telegram, error) {
-	bot, err := tb.NewBot(tb.Settings{
-		Token: cfg.Telegram.Token,
-	})
-
-	if err != nil {
-		logger.Err(err).Msg("new tg bot")
-
-		return nil, err
-	}
-
+func NewTelegram(cfg *conf.Bot, bot *tb.Bot, logger *zerolog.Logger) *Telegram {
 	return &Telegram{
 		cfg:    cfg,
 		logger: logger,
 		sendCh: make(chan string, queueSize),
 		bot:    bot,
-	}, nil
+	}
 }
 
 func (s *Telegram) Start() {
@@ -56,9 +46,9 @@ func (s *Telegram) SendSync(msg string) {
 
 func (s *Telegram) send(msg string) error {
 	_, err := s.bot.Send(&tb.Chat{ID: s.cfg.Telegram.ChatID}, msg)
-	s.logger.Err(err).Str("msg", msg).Msg("send message")
-
 	if err != nil {
+		s.logger.Err(err).Str("msg", msg).Msg("send message")
+
 		return err
 	}
 

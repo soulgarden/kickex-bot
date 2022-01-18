@@ -3,12 +3,12 @@ package client
 import (
 	"fmt"
 	"net/url"
-	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/mailru/easyjson"
 
@@ -44,23 +44,22 @@ type Client struct {
 	cancelOrderPool *sync.Pool
 }
 
-func (c *Client) read(interrupt chan<- os.Signal) {
+func (c *Client) read() error {
 	for {
 		c.conn.SetReadLimit(eventSize)
 
-		err := c.conn.SetReadDeadline(time.Now().Add(readDeadline))
-		if err != nil {
+		if err := c.conn.SetReadDeadline(time.Now().Add(readDeadline)); err != nil {
 			c.logger.Err(err).Msg("set read deadline")
 
-			interrupt <- syscall.SIGINT
+			return err
 		}
 
 		c.conn.SetPongHandler(func(string) error {
-			err = c.conn.SetReadDeadline(time.Now().Add(readDeadline))
+			err := c.conn.SetReadDeadline(time.Now().Add(readDeadline))
 			if err != nil {
 				c.logger.Err(err).Msg("set read deadline")
 
-				interrupt <- syscall.SIGINT
+				return err
 			}
 
 			return nil
@@ -80,7 +79,7 @@ func (c *Client) read(interrupt chan<- os.Signal) {
 			) {
 				c.logger.Warn().Err(err).Msg("unexpected close error")
 
-				interrupt <- syscall.SIGINT
+				return err
 			} else if !websocket.IsCloseError(
 				err,
 				websocket.CloseGoingAway,
@@ -88,10 +87,10 @@ func (c *Client) read(interrupt chan<- os.Signal) {
 			) {
 				c.logger.Err(err).Msg("got error")
 
-				interrupt <- syscall.SIGINT
+				return err
 			}
 
-			return
+			return nil
 		}
 
 		if c.isClosed.IsNotSet() {
@@ -102,12 +101,11 @@ func (c *Client) read(interrupt chan<- os.Signal) {
 	}
 }
 
-func (c *Client) write(interrupt chan<- os.Signal) {
+func (c *Client) write() error {
 	for {
 		msg, ok := <-c.sendCh
-
 		if !ok {
-			return
+			return nil
 		}
 
 		err := c.conn.WriteMessage(msg.Type, msg.Payload)
@@ -118,6 +116,8 @@ func (c *Client) write(interrupt chan<- os.Signal) {
 				websocket.CloseNormalClosure,
 			) {
 				c.logger.Warn().Err(err).Msg("Unexpected close error")
+
+				return err
 			}
 
 			if c.isClosed.IsNotSet() && msg.Type == websocket.PingMessage {
@@ -126,7 +126,7 @@ func (c *Client) write(interrupt chan<- os.Signal) {
 					Bytes("body", msg.Payload).
 					Msg("ping failed, interrupt")
 
-				interrupt <- syscall.SIGINT
+				return err
 			}
 		}
 	}
@@ -472,7 +472,7 @@ func newConnection(cfg *conf.Bot, logger *zerolog.Logger) (*Client, error) {
 	return cli, err
 }
 
-func NewWsCli(cfg *conf.Bot, interrupt chan<- os.Signal, logger *zerolog.Logger) (*Client, error) {
+func NewWsCli(cfg *conf.Bot, g *errgroup.Group, logger *zerolog.Logger) (*Client, error) {
 	cli, err := newConnection(
 		cfg,
 		logger,
@@ -483,8 +483,9 @@ func NewWsCli(cfg *conf.Bot, interrupt chan<- os.Signal, logger *zerolog.Logger)
 		return nil, err
 	}
 
-	go cli.read(interrupt)
-	go cli.write(interrupt)
+	g.Go(cli.read)
+	g.Go(cli.write)
+
 	go cli.pinger()
 
 	return cli, nil

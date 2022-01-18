@@ -2,7 +2,7 @@ package response
 
 type Error struct {
 	ID    string `json:"id"`
-	Error *Err
+	Error *Err   `json:"error"`
 }
 
 type Err struct {

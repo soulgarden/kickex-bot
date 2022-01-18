@@ -2,193 +2,272 @@ package cmd
 
 import (
 	"fmt"
+	"math/big"
 	"os"
-	"sync"
 	"syscall"
 	"time"
 
-	spreadSessSvc "github.com/soulgarden/kickex-bot/service/spread"
-
-	"github.com/soulgarden/kickex-bot/strategy"
-
-	"github.com/soulgarden/kickex-bot/broker"
-
-	"github.com/soulgarden/kickex-bot/service"
-
-	"github.com/soulgarden/kickex-bot/dictionary"
-
 	"github.com/rs/zerolog"
+	"github.com/soulgarden/kickex-bot/broker"
 	"github.com/soulgarden/kickex-bot/conf"
+	"github.com/soulgarden/kickex-bot/dictionary"
+	"github.com/soulgarden/kickex-bot/service"
+	spreadSessSvc "github.com/soulgarden/kickex-bot/service/spread"
 	"github.com/soulgarden/kickex-bot/storage"
+	"github.com/soulgarden/kickex-bot/strategy"
 	"github.com/soulgarden/kickex-bot/subscriber"
 	"github.com/spf13/cobra"
+	"golang.org/x/sync/errgroup"
+	tb "gopkg.in/tucnak/telebot.v2"
 )
 
 const (
 	cleanupInterval = time.Minute * 5
 )
 
-//nolint: gochecknoglobals
-var spreadCmd = &cobra.Command{
-	Use:   "spread",
-	Short: "Start spread trade bot for kickex exchange",
-	Args:  cobra.NoArgs,
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := conf.New()
+func newSpreadCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "spread",
+		Short: "Start spread trade bot for kickex exchange",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			cfg := conf.New()
 
-		defaultLogLevel := zerolog.InfoLevel
-		if cfg.Debug {
-			defaultLogLevel = zerolog.DebugLevel
-		}
+			defaultLogLevel := zerolog.InfoLevel
+			if cfg.Debug {
+				defaultLogLevel = zerolog.DebugLevel
+			}
 
-		logger := zerolog.New(os.Stdout).Level(defaultLogLevel).With().Caller().Logger()
-		wsEventBroker := broker.New(&logger)
-		accEventBroker := broker.New(&logger)
-		st := storage.NewStorage()
-		wsSvc := service.NewWS(cfg, wsEventBroker, &logger)
-		orderSvc := service.NewOrder(cfg, st, wsEventBroker, wsSvc, &logger)
-		balanceSvc := service.NewBalance(st, wsEventBroker, accEventBroker, wsSvc, &logger)
-		sessSvc := spreadSessSvc.New(st)
+			logger := zerolog.New(os.Stdout).Level(defaultLogLevel).With().Timestamp().Caller().Logger()
 
-		cmdManager := service.NewManager(&logger)
+			wsEventBroker := broker.New(&logger)
+			accEventBroker := broker.New(&logger)
+			forceCheckBroker := broker.New(&logger)
 
-		ctx, interrupt := cmdManager.ListenSignal()
+			st := storage.NewStorage()
+			wsSvc := service.NewWS(cfg, wsEventBroker, &logger)
+			orderSvc := service.NewOrder(cfg, st, wsEventBroker, wsSvc, &logger)
+			balanceSvc := service.NewBalance(st, wsEventBroker, accEventBroker, wsSvc, &logger)
+			sessSvc := spreadSessSvc.New(st)
 
-		tgSvc, err := service.NewTelegram(cfg, &logger)
-		if err != nil {
-			logger.Err(err).Msg("new tg")
-
-			interrupt <- syscall.SIGINT
-
-			return
-		}
-
-		go tgSvc.Start()
-
-		tgSvc.SendAsync(fmt.Sprintf("env: %s, spread trading bot starting", cfg.Env))
-		defer tgSvc.SendSync(fmt.Sprintf("env: %s, spread trading bot shutting down", cfg.Env))
-
-		err = wsSvc.Connect(interrupt)
-		if err != nil {
-			logger.Err(err).Msg("ws connect")
-
-			os.Exit(1)
-		}
-
-		go wsSvc.Start(ctx, interrupt)
-		go wsEventBroker.Start()
-		go accEventBroker.Start()
-
-		logger.Warn().Msg("starting...")
-
-		err = balanceSvc.GetBalance(ctx, interrupt)
-		if err != nil {
-			logger.Fatal().Err(err).Msg("get balance")
-		}
-
-		_, err = os.Stat(fmt.Sprintf(cfg.StorageDumpPath, cfg.Env))
-		if err == nil {
-			logger.Warn().Msg("load sessions from dump file")
-
-			d := storage.NewDumpStorage(st)
-
-			err = d.Recover(fmt.Sprintf(cfg.StorageDumpPath, cfg.Env))
+			tgBot, err := tb.NewBot(tb.Settings{
+				Token: cfg.Telegram.Token,
+			})
 			if err != nil {
-				logger.Fatal().Err(err).Msg("load sessions from dump")
+				logger.Err(err).Msg("new tg bot")
+
+				return
 			}
 
-			e := os.Remove(fmt.Sprintf(cfg.StorageDumpPath, cfg.Env))
-			if e != nil {
-				logger.Fatal().Err(err).Msg("remove dump file")
-			}
+			cmdManager := service.NewManager(&logger)
 
-			if len(st.GetUserOrders()) > 0 {
-				err = orderSvc.UpdateOrdersStates(ctx, interrupt)
+			ctx, interrupt := cmdManager.ListenSignal()
+
+			g, ctx := errgroup.WithContext(ctx)
+
+			tgSvc := service.NewTelegram(cfg, tgBot, &logger)
+
+			go tgSvc.Start()
+
+			tgSvc.SendAsync(fmt.Sprintf("env: %s, spread trading bot starting", cfg.Env))
+			defer tgSvc.SendSync(fmt.Sprintf("env: %s, spread trading bot shutting down", cfg.Env))
+
+			wsG, _ := errgroup.WithContext(ctx)
+
+			if err := wsSvc.Connect(wsG); err != nil {
+				interrupt <- syscall.SIGINT
+
+				return
+			}
+			g.Go(func() error { return wsSvc.Start(ctx) })
+
+			go func() {
+				err := wsG.Wait()
 				if err != nil {
-					logger.Fatal().Err(err).Msg("update orders for dumped state")
+					interrupt <- syscall.SIGINT
 				}
+			}()
+
+			go wsEventBroker.Start()
+			go accEventBroker.Start()
+			go forceCheckBroker.Start()
+
+			g.Go(func() error { return balanceSvc.GetBalance(ctx) })
+
+			dumpSvc := spreadSessSvc.NewDump(cfg, orderSvc, &logger)
+
+			isExists, err := dumpSvc.IsStateFileExists()
+			if err != nil {
+				interrupt <- syscall.SIGINT
+
+				return
 			}
-		} else if !os.IsNotExist(err) {
-			logger.Fatal().Err(err).Msg("open dump file")
-		}
 
-		accounting := subscriber.NewAccounting(cfg, st, wsEventBroker, accEventBroker, wsSvc, balanceSvc, &logger)
-		pairs := subscriber.NewPairs(cfg, st, wsEventBroker, wsSvc, &logger)
+			if isExists {
+				err = dumpSvc.LoadFromStateFile(ctx, st)
+				if err != nil {
+					interrupt <- syscall.SIGINT
 
-		var wg sync.WaitGroup
-
-		wg.Add(1)
-		go pairs.Start(ctx, interrupt, &wg)
-
-		for {
-			if st.GetPair(cfg.Spread.Pair) != nil {
-				break
-			}
-
-			time.Sleep(pairsWaitingDuration)
-		}
-
-		wg.Add(1)
-		go accounting.Start(ctx, interrupt, &wg)
-
-		pair := st.GetPair(cfg.Spread.Pair)
-		if pair == nil {
-			logger.
-				Err(dictionary.ErrInvalidPair).
-				Str("pair", cfg.Spread.Pair).
-				Msg(dictionary.ErrInvalidPair.Error())
-
-			interrupt <- syscall.SIGINT
-		}
-
-		orderBookEventBroker := broker.New(&logger)
-		go orderBookEventBroker.Start()
-
-		orderBook := st.RegisterOrderBook(pair, orderBookEventBroker)
-
-		wg.Add(1)
-		go subscriber.NewOrderBook(cfg, st, wsEventBroker, wsSvc, pair, orderBook, &logger).Start(ctx, &wg, interrupt)
-
-		spreadTrader, err := strategy.NewSpread(
-			cfg,
-			st,
-			wsEventBroker,
-			accEventBroker,
-			service.NewConversion(st, &logger),
-			tgSvc,
-			wsSvc,
-			pair,
-			orderBook,
-			orderSvc,
-			sessSvc,
-			&logger,
-		)
-		if err != nil {
-			interrupt <- syscall.SIGINT
-		} else {
-			wg.Add(1)
-			go spreadTrader.Start(ctx, &wg, interrupt)
-		}
-
-		go func() {
-			for {
-				select {
-				case <-time.After(cleanupInterval):
-					logger.Debug().Msg("run cleanup old orders")
-
-					st.CleanUpOldOrders()
-				case <-ctx.Done():
 					return
 				}
 			}
-		}()
 
-		wg.Wait()
+			accountingSub := subscriber.NewAccounting(cfg, st, wsEventBroker, accEventBroker, wsSvc, balanceSvc, &logger)
+			pairsSub := subscriber.NewPairs(cfg, st, wsEventBroker, wsSvc, &logger)
 
-		wsSvc.Close()
+			g.Go(func() error { return pairsSub.Start(ctx) })
 
-		d := storage.NewDumpStorage(st)
-		err = d.DumpStorage(fmt.Sprintf(cfg.StorageDumpPath, cfg.Env))
-		logger.Err(err).Msg("dump sessions to file")
-	},
+			for {
+				if st.GetPair(cfg.Spread.Pair) != nil {
+					break
+				}
+
+				time.Sleep(pairsWaitingDuration)
+			}
+
+			g.Go(func() error { return accountingSub.Start(ctx) })
+
+			pair := st.GetPair(cfg.Spread.Pair)
+			if pair == nil {
+				logger.
+					Err(dictionary.ErrInvalidPair).
+					Str("pair", cfg.Spread.Pair).
+					Msg(dictionary.ErrInvalidPair.Error())
+
+				interrupt <- syscall.SIGINT
+
+				return
+			}
+
+			orderBookEventBroker := broker.New(&logger)
+			go orderBookEventBroker.Start()
+
+			orderBook := st.RegisterOrderBook(pair, orderBookEventBroker)
+
+			zeroStep := big.NewFloat(0).Text('f', pair.PriceScale)
+			priceStepStr := zeroStep[0:pair.PriceScale+1] + "1"
+
+			priceStep, ok := big.NewFloat(0).SetPrec(uint(pair.PriceScale)).SetString(priceStepStr)
+			if !ok {
+				logger.Err(dictionary.ErrParseFloat).Str("val", priceStepStr).Msg("parse string as float")
+
+				interrupt <- syscall.SIGINT
+
+				return
+			}
+
+			g.Go(func() error {
+				return subscriber.NewOrderBook(cfg, st, wsEventBroker, wsSvc, pair, orderBook, &logger).Start(ctx)
+			})
+
+			spreadTGSvc := spreadSessSvc.NewTg(cfg, pair, tgSvc, sessSvc, orderBook)
+
+			spreadOrderSvc, err := spreadSessSvc.NewOrder(
+				cfg,
+				pair,
+				orderBook,
+				st,
+				wsSvc,
+				orderSvc,
+				sessSvc,
+				spreadTGSvc,
+				priceStep,
+				forceCheckBroker,
+				&logger,
+			)
+			if err != nil {
+				logger.Err(err).Msg("new spread order svc")
+
+				interrupt <- syscall.SIGINT
+
+				return
+			}
+
+			decideSvc, err := spreadSessSvc.NewDecider(
+				cfg,
+				pair,
+				orderBook,
+				st,
+				spreadOrderSvc,
+				spreadTGSvc,
+				forceCheckBroker,
+				&logger,
+			)
+			if err != nil {
+				logger.Err(err).Msg("new decide svc")
+
+				interrupt <- syscall.SIGINT
+
+				return
+			}
+
+			watchSvc, err := spreadSessSvc.NewWatch(
+				cfg,
+				pair,
+				orderBook,
+				st,
+				accEventBroker,
+				orderSvc,
+				spreadOrderSvc,
+				decideSvc,
+				priceStep,
+				forceCheckBroker,
+				&logger,
+			)
+			if err != nil {
+				logger.Err(err).Msg("new spread watch svc")
+
+				interrupt <- syscall.SIGINT
+
+				return
+			}
+
+			spreadTrader, err := strategy.NewSpread(
+				cfg,
+				st,
+				wsEventBroker,
+				service.NewConversion(st, &logger),
+				wsSvc,
+				pair,
+				orderBook,
+				orderSvc,
+				watchSvc,
+				decideSvc,
+				&logger,
+			)
+			if err != nil {
+				interrupt <- syscall.SIGINT
+
+				return
+			}
+
+			g.Go(func() error { return spreadTrader.Start(ctx, g) })
+
+			go func() {
+				ticker := time.NewTicker(cleanupInterval)
+				defer ticker.Stop()
+
+				for {
+					select {
+					case <-ticker.C:
+						logger.Info().Msg("run cleanup old orders")
+
+						st.CleanUpOldOrders()
+					case <-ctx.Done():
+						return
+					}
+				}
+			}()
+
+			err = g.Wait()
+
+			logger.Err(err).Msg("wait goroutines")
+
+			wsSvc.Close()
+
+			d := storage.NewDumpStorage(st)
+			err = d.DumpStorage(fmt.Sprintf(cfg.StorageDumpPath, cfg.Env))
+			logger.Err(err).Msg("dump sessions to file")
+		},
+	}
 }

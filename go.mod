@@ -11,6 +11,7 @@ require (
 	github.com/spf13/cobra v1.1.3
 	github.com/tevino/abool v1.2.0
 	go.uber.org/atomic v1.7.0
+	golang.org/x/sync v0.0.0-20201020160332-67f06af15bc9
 	gopkg.in/tucnak/telebot.v2 v2.3.5
 )
 

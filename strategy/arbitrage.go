@@ -5,12 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"os"
 	"strconv"
 	"strings"
-	"sync"
-	"syscall"
 	"time"
+
+	"github.com/soulgarden/kickex-bot/service/arbitrage"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/mailru/easyjson"
 
@@ -27,8 +28,8 @@ import (
 	"github.com/soulgarden/kickex-bot/storage"
 )
 
-const sendInterval = time.Minute
-const spreadForAlert = 1
+const spreadForAlert = 0.5
+
 const orderExecutionDuration = time.Minute * 5
 const lastStepOrderExecutionDuration = time.Minute * 60
 const chSize = 1024
@@ -37,23 +38,23 @@ type Arbitrage struct {
 	cfg            *conf.Bot
 	storage        *storage.Storage
 	conversion     *service.Conversion
-	tgSvc          *service.Telegram
+	arbTSvc        *arbitrage.Tg
 	wsSvc          *service.WS
 	wsEventBroker  *broker.Broker
 	accEventBroker *broker.Broker
 	orderSvc       *service.Order
 	sessSvc        *spreadSvc.Session
 	balanceSvc     *service.Balance
-	sentAt         *time.Time
 	totalBuyInUSDT *big.Float
-	logger         *zerolog.Logger
+
+	logger *zerolog.Logger
 }
 
 func NewArbitrage(
 	cfg *conf.Bot,
 	storage *storage.Storage,
 	conversion *service.Conversion,
-	tgSvc *service.Telegram,
+	arbTSvc *arbitrage.Tg,
 	wsSvc *service.WS,
 	wsEventBroker *broker.Broker,
 	accEventBroker *broker.Broker,
@@ -76,7 +77,7 @@ func NewArbitrage(
 		cfg:            cfg,
 		storage:        storage,
 		conversion:     conversion,
-		tgSvc:          tgSvc,
+		arbTSvc:        arbTSvc,
 		wsSvc:          wsSvc,
 		wsEventBroker:  wsEventBroker,
 		accEventBroker: accEventBroker,
@@ -88,15 +89,13 @@ func NewArbitrage(
 	}, nil
 }
 
-func (s *Arbitrage) Start(ctx context.Context, wg *sync.WaitGroup, interrupt chan<- os.Signal) {
-	defer wg.Done()
-
+func (s *Arbitrage) Start(ctx context.Context, g *errgroup.Group) error {
 	s.logger.Warn().Msg("arbitrage process started")
 	defer s.logger.Warn().Msg("stop arbitrage process")
 
 	ch := make(chan bool, chSize)
 
-	go s.collectEvents(ctx, interrupt, ch)
+	g.Go(func() error { return s.collectEvents(ctx, g, ch) })
 
 	pair := s.storage.GetPair(s.cfg.Arbitrage.Pair)
 
@@ -104,49 +103,43 @@ func (s *Arbitrage) Start(ctx context.Context, wg *sync.WaitGroup, interrupt cha
 		select {
 		case _, ok := <-ch:
 			if !ok {
-				s.logger.Warn().Msg("event channel closed")
+				s.logger.Err(dictionary.ErrEventChannelClosed).Msg("event channel closed")
 
-				interrupt <- syscall.SIGINT
-
-				return
+				return dictionary.ErrEventChannelClosed
 			}
 
-			s.check(ctx, pair)
+			if err := s.check(ctx, pair); err != nil {
+				return err
+			}
 
 		case <-ctx.Done():
-			return
+			return nil
 		}
 	}
 }
 
-func (s *Arbitrage) collectEvents(ctx context.Context, interrupt chan<- os.Signal, ch chan<- bool) {
-	var wg sync.WaitGroup
-
-	s.logger.Warn().Msg("start collect events")
-	defer s.logger.Warn().Msg("finish collect events")
-
+func (s *Arbitrage) collectEvents(ctx context.Context, g *errgroup.Group, ch chan<- bool) error {
 	pairs := s.GetPairsList()
 
 	for pairName := range pairs {
 		pair := s.storage.GetPair(pairName)
 
-		wg.Add(1)
+		g.Go(func() error {
+			s.logger.Warn().Str("pair", pair.GetPairName()).Msg("start collect events")
+			defer s.logger.Warn().Str("pair", pair.GetPairName()).Msg("finish collect events")
 
-		go s.listenPairEvents(ctx, &wg, interrupt, pair, ch)
+			return s.listenPairEvents(ctx, pair, ch)
+		})
 	}
 
-	wg.Wait()
+	return nil
 }
 
 func (s *Arbitrage) listenPairEvents(
 	ctx context.Context,
-	wg *sync.WaitGroup,
-	interrupt chan<- os.Signal,
 	pair *storage.Pair,
 	ch chan<- bool,
-) {
-	defer wg.Done()
-
+) error {
 	s.logger.Warn().Str("pair", pair.GetPairName()).Msg("start listen pair events")
 	defer s.logger.Warn().Str("pair", pair.GetPairName()).Msg("finish listen pair events")
 
@@ -157,21 +150,19 @@ func (s *Arbitrage) listenPairEvents(
 		select {
 		case _, ok := <-e:
 			if !ok {
-				s.logger.Warn().Msg("receive event error")
+				s.logger.Err(dictionary.ErrEventChannelClosed).Msg("event channel closed")
 
-				interrupt <- syscall.SIGINT
-
-				return
+				return dictionary.ErrEventChannelClosed
 			}
 
 			ch <- true
 		case <-ctx.Done():
-			return
+			return nil
 		}
 	}
 }
 
-func (s *Arbitrage) check(ctx context.Context, pair *storage.Pair) {
+func (s *Arbitrage) check(ctx context.Context, pair *storage.Pair) error {
 	baseUSDTPair := s.storage.GetPair(pair.BaseCurrency + "/" + dictionary.USDT)
 
 	baseBuyOrder := s.storage.GetOrderBook(baseUSDTPair.BaseCurrency, baseUSDTPair.QuoteCurrency).GetMinAsk()
@@ -188,7 +179,7 @@ func (s *Arbitrage) check(ctx context.Context, pair *storage.Pair) {
 
 	if baseBuyOrder == nil || baseSellOrder == nil || quotedBuyOrder == nil || quotedSellOrder == nil ||
 		baseQuotedBuyOrder == nil || baseQuotedSellOrder == nil {
-		return
+		return nil
 	}
 
 	err := s.checkBuyBaseOption(
@@ -202,19 +193,11 @@ func (s *Arbitrage) check(ctx context.Context, pair *storage.Pair) {
 	)
 
 	if err != nil {
-		s.tgSvc.SendAsync(
-			fmt.Sprintf(
-				`env: %s,
-pair %s,
-check buy base option finished with error,
-error %s`,
-				s.cfg.Env,
-				baseQuotedPair.GetPairName(),
-				err.Error(),
-			),
-		)
+		s.arbTSvc.SendTGCheckBuyBaseFinishedWithError(baseQuotedPair, err)
 
-		s.logger.Fatal().Err(err).Msg("check buy base option finished with error") // refactor
+		s.logger.Err(err).Msg("check buy base option finished with error")
+
+		return err
 	}
 
 	s.checkBuyQuotedOptions(
@@ -225,6 +208,8 @@ error %s`,
 		baseQuotedPair,
 		baseQuotedBuyOrder,
 	)
+
+	return nil
 }
 
 func (s *Arbitrage) GetPairsList() map[string]bool {
@@ -283,7 +268,7 @@ func (s *Arbitrage) checkBuyBaseOption(
 			Msg("pair spread")
 
 		if spread.Cmp(big.NewFloat(spreadForAlert)) == 1 {
-			s.sendTGBuyBaseArbitrageAvailable(baseQuotedPair, startBuyVolume, quotedSellOrderUSDTAmount, spread)
+			s.arbTSvc.SendTGBuyBaseArbitrageAvailable(baseQuotedPair, startBuyVolume, quotedSellOrderUSDTAmount, spread)
 
 			// 1. buy base for USDT
 			buyBaseOrder, err := s.buyBaseForUSDT(
@@ -322,7 +307,7 @@ func (s *Arbitrage) checkBuyBaseOption(
 					return
 				}
 
-				s.sendTGSuccess(
+				s.arbTSvc.SendTGSuccess(
 					s.cfg.Env,
 					baseQuotedPair.GetPairName(),
 					big.NewFloat(0).
@@ -408,7 +393,7 @@ func (s *Arbitrage) sellBaseForQuoted(
 
 	if err != nil {
 		if errors.Is(err, dictionary.ErrOrderNotCompleted) {
-			s.sendTGFailed(s.cfg.Env, dictionary.SecondStep, oid, baseQuotedPair.GetPairName())
+			s.arbTSvc.SendTGFailed(s.cfg.Env, dictionary.SecondStep, oid, baseQuotedPair.GetPairName())
 
 			return nil, s.cancelOrder(oid, baseQuotedPair) // create order selling what was bought on the first step
 		}
@@ -457,7 +442,7 @@ func (s *Arbitrage) sellQuotedForUSDT(
 
 	if err != nil {
 		if errors.Is(err, dictionary.ErrOrderNotCompleted) {
-			s.sendTGFailed(s.cfg.Env, dictionary.ThirdStepStep, oid, quotedUSDTPair.GetPairName())
+			s.arbTSvc.SendTGFailed(s.cfg.Env, dictionary.ThirdStepStep, oid, quotedUSDTPair.GetPairName())
 
 			return nil, s.cancelOrder(oid, quotedUSDTPair)
 		}
@@ -518,7 +503,7 @@ func (s *Arbitrage) checkBuyQuotedOptions(
 			Msg("pair spread")
 
 		if spread.Cmp(big.NewFloat(spreadForAlert)) == 1 {
-			s.sendTGBuyQuotedArbitrageAvailable(baseQuotedPair, quotedUSDTPair, baseSellOrderUSDTAmount, spread)
+			s.arbTSvc.SendTGBuyQuotedArbitrageAvailable(baseQuotedPair, quotedUSDTPair, baseSellOrderUSDTAmount, spread)
 		}
 	}
 }
@@ -687,13 +672,7 @@ func (s *Arbitrage) watchOrder(
 				if startedTime.Add(orderCreationDuration).Before(time.Now()) {
 					s.logger.Err(dictionary.ErrOrderCreationEventNotReceived).Msg("order creation event not received")
 
-					s.tgSvc.SendAsync(fmt.Sprintf(
-						`env: %s,
-order creation event not received,
-id: %d`,
-						s.cfg.Env,
-						orderID,
-					))
+					s.arbTSvc.SendTGOrderCreationEventNotReceived(orderID)
 
 					return false, dictionary.ErrOrderCreationEventNotReceived
 				}
@@ -776,88 +755,4 @@ func (s *Arbitrage) prepareAmount(a *big.Float, pair *storage.Pair) string {
 	}
 
 	return resultAmount
-}
-
-func (s *Arbitrage) sendTGSuccess(env, pairName, beforeUSDTAmount, afterUSDTAmount string) {
-	s.tgSvc.SendAsync(
-		fmt.Sprintf(
-			`env: %s,
-			arbitrage done,
-			pair %s,
-			before USDT amount %s,
-			after USDT amount %s`,
-			env,
-			pairName,
-			beforeUSDTAmount,
-			afterUSDTAmount,
-		))
-}
-
-func (s *Arbitrage) sendTGFailed(env string, step int, oid int64, pairName string) {
-	s.tgSvc.SendAsync(
-		fmt.Sprintf(
-			`env: %s,
-			arbitrage failed on %d step,
-			cancel order %d,
-			pair %s`,
-			env,
-			step,
-			oid,
-			pairName,
-		))
-}
-
-func (s *Arbitrage) sendTGBuyBaseArbitrageAvailable(
-	baseQuotedPair *storage.Pair,
-	startBuyVolume *big.Float,
-	quotedSellOrderUSDTAmount *big.Float,
-	spread *big.Float,
-) {
-	now := time.Now()
-	if s.sentAt == nil || time.Now().After(s.sentAt.Add(sendInterval)) {
-		s.sentAt = &now
-
-		s.tgSvc.SendAsync(
-			fmt.Sprintf(
-				`env: %s,
-pair %s,
-arbitrage available,
-before USDT amount %s,
-after USDT amount %s,
-spread %s`,
-				s.cfg.Env,
-				baseQuotedPair.GetPairName(),
-				startBuyVolume.Text('f', dictionary.ExtendedPrecision),
-				quotedSellOrderUSDTAmount.Text('f', dictionary.ExtendedPrecision),
-				spread.Text('f', dictionary.DefaultPrecision),
-			),
-		)
-	}
-}
-
-func (s *Arbitrage) sendTGBuyQuotedArbitrageAvailable(
-	baseQuotedPair *storage.Pair,
-	quotedUSDTPair *storage.Pair,
-	baseSellOrderUSDTAmount *big.Float,
-	spread *big.Float,
-) {
-	now := time.Now()
-	if s.sentAt == nil || time.Now().After(s.sentAt.Add(sendInterval)) {
-		s.sentAt = &now
-
-		s.tgSvc.SendAsync(
-			fmt.Sprintf(
-				`env: %s,
-arbitrage available, but not supported
-pair %s,
-before USDT amount %s,
-after USDT amount %s,
-spread %s`,
-				s.cfg.Env,
-				baseQuotedPair.GetPairName(),
-				quotedUSDTPair.MinVolume.Text('f', dictionary.ExtendedPrecision),
-				baseSellOrderUSDTAmount.Text('f', dictionary.ExtendedPrecision),
-				spread.Text('f', dictionary.DefaultPrecision),
-			))
-	}
 }

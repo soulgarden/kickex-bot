@@ -12,9 +12,9 @@ import (
 var rootCmd = &cobra.Command{}
 
 func Execute() {
-	rootCmd.AddCommand(spreadCmd)
-	rootCmd.AddCommand(buyCmd)
-	rootCmd.AddCommand(arbitrageCmd)
+	rootCmd.AddCommand(newSpreadCmd())
+	rootCmd.AddCommand(newBuyCmd())
+	rootCmd.AddCommand(NewArbitrageCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		log.Err(err).Msg("command execution failed")

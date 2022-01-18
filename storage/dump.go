@@ -2,7 +2,7 @@ package storage
 
 import (
 	"encoding/json"
-	"io/ioutil"
+	"os"
 
 	"github.com/mailru/easyjson"
 
@@ -37,13 +37,13 @@ func (d *DumpStorage) DumpStorage(path string) error {
 		return err
 	}
 
-	err = ioutil.WriteFile(path, marshalled, dictionary.DumpFilePermissions)
+	err = os.WriteFile(path, marshalled, dictionary.DumpFilePermissions)
 
 	return err
 }
 
 func (d *DumpStorage) Recover(path string) error {
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}

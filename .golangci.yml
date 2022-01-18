@@ -10,4 +10,5 @@ issues:
         - exhaustivestruct
         - wrapcheck
         - tagliatelle
+        - dupl
   enable-all: true

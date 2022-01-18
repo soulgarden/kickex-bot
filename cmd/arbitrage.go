@@ -3,165 +3,166 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"sync"
 	"syscall"
 	"time"
 
-	spreadSessSvc "github.com/soulgarden/kickex-bot/service/spread"
-
-	"github.com/soulgarden/kickex-bot/strategy"
-
+	"github.com/rs/zerolog"
 	"github.com/soulgarden/kickex-bot/broker"
-
+	"github.com/soulgarden/kickex-bot/conf"
 	"github.com/soulgarden/kickex-bot/dictionary"
 	"github.com/soulgarden/kickex-bot/service"
-
-	"github.com/rs/zerolog"
-	"github.com/soulgarden/kickex-bot/conf"
+	"github.com/soulgarden/kickex-bot/service/arbitrage"
+	spreadSessSvc "github.com/soulgarden/kickex-bot/service/spread"
 	"github.com/soulgarden/kickex-bot/storage"
+	"github.com/soulgarden/kickex-bot/strategy"
 	"github.com/soulgarden/kickex-bot/subscriber"
 	"github.com/spf13/cobra"
+	"golang.org/x/sync/errgroup"
+	tb "gopkg.in/tucnak/telebot.v2"
 )
 
 const pairsWaitingDuration = time.Millisecond * 100
 
-//nolint: gochecknoglobals
-var arbitrageCmd = &cobra.Command{
-	Use:   "arbitrage",
-	Short: "Start bot for kickex exchange that search price arbitrage in pairs",
-	Args:  cobra.NoArgs,
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := conf.New()
+func NewArbitrageCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "arbitrage",
+		Short: "Start bot for kickex exchange that search price arbitrage in pairs",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			cfg := conf.New()
 
-		defaultLogLevel := zerolog.InfoLevel
-		if cfg.Debug {
-			defaultLogLevel = zerolog.DebugLevel
-		}
+			defaultLogLevel := zerolog.InfoLevel
+			if cfg.Debug {
+				defaultLogLevel = zerolog.DebugLevel
+			}
 
-		logger := zerolog.New(os.Stdout).Level(defaultLogLevel).With().Caller().Logger()
-		wsEventBroker := broker.New(&logger)
-		accEventBroker := broker.New(&logger)
-		st := storage.NewStorage()
-		wsSvc := service.NewWS(cfg, wsEventBroker, &logger)
-		balanceSvc := service.NewBalance(st, wsEventBroker, accEventBroker, wsSvc, &logger)
-		orderSvc := service.NewOrder(cfg, st, wsEventBroker, wsSvc, &logger)
-		sessSvc := spreadSessSvc.New(st)
+			logger := zerolog.New(os.Stdout).Level(defaultLogLevel).With().Caller().Logger()
+			wsEventBroker := broker.New(&logger)
+			accEventBroker := broker.New(&logger)
+			st := storage.NewStorage()
+			wsSvc := service.NewWS(cfg, wsEventBroker, &logger)
+			balanceSvc := service.NewBalance(st, wsEventBroker, accEventBroker, wsSvc, &logger)
+			orderSvc := service.NewOrder(cfg, st, wsEventBroker, wsSvc, &logger)
+			sessSvc := spreadSessSvc.New(st)
 
-		cmdManager := service.NewManager(&logger)
+			tgBot, err := tb.NewBot(tb.Settings{
+				Token: cfg.Telegram.Token,
+			})
+			if err != nil {
+				logger.Err(err).Msg("new tg bot")
 
-		ctx, interrupt := cmdManager.ListenSignal()
+				return
+			}
 
-		err := wsSvc.Connect(interrupt)
-		if err != nil {
-			logger.Err(err).Msg("ws connect")
+			cmdManager := service.NewManager(&logger)
 
-			os.Exit(1)
-		}
+			ctx, interrupt := cmdManager.ListenSignal()
 
-		go wsSvc.Start(ctx, interrupt)
-		go wsEventBroker.Start()
-		go accEventBroker.Start()
+			g, ctx := errgroup.WithContext(ctx)
 
-		logger.Warn().Msg("starting...")
+			tgSvc := service.NewTelegram(cfg, tgBot, &logger)
 
-		err = balanceSvc.GetBalance(ctx, interrupt)
-		if err != nil {
-			logger.Fatal().Err(err).Msg("get balance")
-		}
+			go tgSvc.Start()
 
-		accountingSub := subscriber.NewAccounting(cfg, st, wsEventBroker, accEventBroker, wsSvc, balanceSvc, &logger)
-		pairsSub := subscriber.NewPairs(cfg, st, wsEventBroker, wsSvc, &logger)
+			tgSvc.SendAsync(fmt.Sprintf("env: %s, arbitrage bot starting", cfg.Env))
+			defer tgSvc.SendSync(fmt.Sprintf("env: %s, arbitrage bot shutting down", cfg.Env))
 
-		var wg sync.WaitGroup
+			wsG, _ := errgroup.WithContext(ctx)
 
-		wg.Add(1)
+			if err := wsSvc.Connect(wsG); err != nil {
+				interrupt <- syscall.SIGINT
 
-		go pairsSub.Start(ctx, interrupt, &wg)
+				return
+			}
+			g.Go(func() error { return wsSvc.Start(ctx) })
 
-		tgSvc, err := service.NewTelegram(cfg, &logger)
-		if err != nil {
-			logger.Err(err).Msg("new tg")
-
-			interrupt <- syscall.SIGINT
-
-			return
-		}
-
-		go tgSvc.Start()
-
-		arb, err := strategy.NewArbitrage(
-			cfg,
-			st,
-			service.NewConversion(st, &logger),
-			tgSvc,
-			wsSvc,
-			wsEventBroker,
-			accEventBroker,
-			orderSvc,
-			sessSvc,
-			balanceSvc,
-			&logger,
-		)
-		if err != nil {
-			logger.Err(err).Msg("new arbitrage")
-
-			interrupt <- syscall.SIGINT
-
-			return
-		}
-
-		pairs := arb.GetPairsList()
-
-		for {
-			pairsNum := len(pairs)
-			for pairName := range pairs {
-				if st.GetPair(pairName) != nil {
-					pairsNum--
+			go func() {
+				err := wsG.Wait()
+				if err != nil {
+					interrupt <- syscall.SIGINT
 				}
-			}
+			}()
 
-			if pairsNum == 0 {
-				break
-			}
+			go wsEventBroker.Start()
+			go accEventBroker.Start()
 
-			time.Sleep(pairsWaitingDuration)
-		}
+			g.Go(func() error { return balanceSvc.GetBalance(ctx) })
 
-		tgSvc.SendAsync(fmt.Sprintf("env: %s, arbitrage bot starting", cfg.Env))
-		defer tgSvc.SendSync(fmt.Sprintf("env: %s, arbitrage bot shutting down", cfg.Env))
+			accountingSub := subscriber.NewAccounting(cfg, st, wsEventBroker, accEventBroker, wsSvc, balanceSvc, &logger)
+			pairsSub := subscriber.NewPairs(cfg, st, wsEventBroker, wsSvc, &logger)
 
-		wg.Add(1)
-		go accountingSub.Start(ctx, interrupt, &wg)
+			g.Go(func() error { return pairsSub.Start(ctx) })
 
-		for pairName := range pairs {
-			pair := st.GetPair(pairName)
-			if pair == nil {
-				logger.
-					Err(dictionary.ErrInvalidPair).
-					Str("pair", pairName).
-					Msg(dictionary.ErrInvalidPair.Error())
+			arb, err := strategy.NewArbitrage(
+				cfg,
+				st,
+				service.NewConversion(st, &logger),
+				arbitrage.NewTg(cfg, tgSvc),
+				wsSvc,
+				wsEventBroker,
+				accEventBroker,
+				orderSvc,
+				sessSvc,
+				balanceSvc,
+				&logger,
+			)
+			if err != nil {
+				logger.Err(err).Msg("new arbitrage")
 
 				interrupt <- syscall.SIGINT
 
-				break
+				return
 			}
 
-			orderBookEventBroker := broker.New(&logger)
-			go orderBookEventBroker.Start()
+			pairs := arb.GetPairsList()
 
-			orderBook := st.RegisterOrderBook(pair, orderBookEventBroker)
+			for {
+				pairsNum := len(pairs)
+				for pairName := range pairs {
+					if st.GetPair(pairName) != nil {
+						pairsNum--
+					}
+				}
 
-			wg.Add(1)
-			go subscriber.NewOrderBook(cfg, st, wsEventBroker, wsSvc, pair, orderBook, &logger).Start(ctx, &wg, interrupt)
-		}
+				if pairsNum == 0 {
+					break
+				}
 
-		time.Sleep(pairsWaitingDuration)
+				time.Sleep(pairsWaitingDuration)
+			}
 
-		wg.Add(1)
-		go arb.Start(ctx, &wg, interrupt)
+			g.Go(func() error { return accountingSub.Start(ctx) })
 
-		wg.Wait()
+			for pairName := range pairs {
+				pair := st.GetPair(pairName)
+				if pair == nil {
+					logger.
+						Err(dictionary.ErrInvalidPair).
+						Str("pair", pairName).
+						Msg(dictionary.ErrInvalidPair.Error())
 
-		wsSvc.Close()
-	},
+					interrupt <- syscall.SIGINT
+
+					break
+				}
+
+				orderBookEventBroker := broker.New(&logger)
+				go orderBookEventBroker.Start()
+
+				orderBook := st.RegisterOrderBook(pair, orderBookEventBroker)
+
+				g.Go(func() error {
+					return subscriber.NewOrderBook(cfg, st, wsEventBroker, wsSvc, pair, orderBook, &logger).Start(ctx)
+				})
+			}
+
+			g.Go(func() error { return arb.Start(ctx, g) })
+
+			err = g.Wait()
+
+			logger.Err(err).Msg("wait goroutines")
+
+			wsSvc.Close()
+		},
+	}
 }

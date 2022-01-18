@@ -8,8 +8,8 @@ test:
 	ROOT_DIR=${PWD} go test -failfast ./...
 
 build:
-	docker build  . -f ./docker/bot/Dockerfile -t soulgarden/kickex-bot:1.0.62
-	docker push soulgarden/kickex-bot:1.0.62
+	docker build  . -f ./docker/bot/Dockerfile -t soulgarden/kickex-bot:1.0.63
+	docker push soulgarden/kickex-bot:1.0.63
 
 build_fluentd:
 	docker build ./docker/fluentd -t soulgarden/kickex-bot:fluentd
