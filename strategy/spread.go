@@ -39,8 +39,11 @@ type Spread struct {
 	watchSvc       *spreadSvc.Watch
 	deciderSvc     *spreadSvc.Decider
 	spreadOrderSvc *spreadSvc.Order
+	tgSvc          *spreadSvc.Tg
 
 	totalBuyInUSDT *big.Float
+
+	forceCheckBroker *broker.Broker
 
 	logger *zerolog.Logger
 }
@@ -56,6 +59,9 @@ func NewSpread(
 	orderSvc *service.Order,
 	watchSvc *spreadSvc.Watch,
 	deciderSvc *spreadSvc.Decider,
+	spreadOrderSvc *spreadSvc.Order,
+	tgSvc *spreadSvc.Tg,
+	forceCheckBroker *broker.Broker,
 	logger *zerolog.Logger,
 ) (*Spread, error) {
 	totalBuyInUSDT, ok := big.NewFloat(0).SetString(cfg.Spread.TotalBuyInUSDT)
@@ -66,17 +72,20 @@ func NewSpread(
 	}
 
 	return &Spread{
-		pair:           pair,
-		storage:        storage,
-		wsEventBroker:  wsEventBroker,
-		conversion:     conversion,
-		wsSvc:          wsSvc,
-		totalBuyInUSDT: totalBuyInUSDT,
-		orderBook:      orderBook,
-		orderSvc:       orderSvc,
-		watchSvc:       watchSvc,
-		deciderSvc:     deciderSvc,
-		logger:         logger,
+		pair:             pair,
+		storage:          storage,
+		wsEventBroker:    wsEventBroker,
+		conversion:       conversion,
+		wsSvc:            wsSvc,
+		totalBuyInUSDT:   totalBuyInUSDT,
+		orderBook:        orderBook,
+		orderSvc:         orderSvc,
+		watchSvc:         watchSvc,
+		deciderSvc:       deciderSvc,
+		spreadOrderSvc:   spreadOrderSvc,
+		tgSvc:            tgSvc,
+		forceCheckBroker: forceCheckBroker,
+		logger:           logger,
 	}, nil
 }
 
@@ -252,6 +261,8 @@ func (s *Spread) processOldSession(ctx context.Context, g *errgroup.Group, sess 
 
 		g.Go(func() error { return s.watchSvc.Start(ctx, sess, sess.GetActiveSellOrderID()) })
 	}
+
+	s.tgSvc.OldSessionStarted(sess)
 
 	err := s.processSession(sessCtx, g, sess)
 	s.logger.Err(err).
@@ -435,9 +446,8 @@ func (s *Spread) checkListenOrderErrors(msg []byte, sess *storageSpread.Session)
 						Str("ext oid", sess.GetActiveBuyExtOrderID()).
 						Msg("altered buy order already cancelled")
 
-					sess.SetActiveBuyExtOrderID("")
-					sess.SetActiveBuyOrderRequestID("")
-					sess.SetIsNeedToCreateBuyOrder(true)
+					sess.SetBuyOrderCancelledFlags()
+					s.forceCheckBroker.Publish(struct{}{})
 
 					return true, nil
 				} else if o.State == dictionary.StateDone {
@@ -469,9 +479,8 @@ func (s *Spread) checkListenOrderErrors(msg []byte, sess *storageSpread.Session)
 						Str("ext oid", sess.GetActiveSellExtOrderID()).
 						Msg("altered sell order already cancelled")
 
-					sess.SetActiveSellExtOrderID("")
-					sess.SetActiveSellOrderRequestID("")
-					sess.SetIsNeedToCreateSellOrder(true)
+					sess.SetSellOrderCancelledFlags()
+					s.forceCheckBroker.Publish(struct{}{})
 
 					return true, nil
 				} else if o.State == dictionary.StateDone {

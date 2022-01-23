@@ -55,6 +55,8 @@ func (s *Dump) LoadFromStateFile(ctx context.Context, st *storage.Storage) error
 		return err
 	}
 
+	s.logger.Warn().Int("number", len(st.GetUserOrders())).Msg("found orders")
+
 	if len(st.GetUserOrders()) > 0 {
 		err = s.orderSvc.UpdateOrdersStates(ctx)
 		if err != nil {

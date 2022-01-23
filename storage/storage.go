@@ -143,9 +143,11 @@ func (s *Storage) GetPair(pairName string) *Pair {
 	return pair
 }
 
-func (s *Storage) CleanUpOldOrders() {
+func (s *Storage) CleanUpOldOrders() int {
 	s.mx.Lock()
 	defer s.mx.Unlock()
+
+	deleted := 0
 
 	for _, baseCurrency := range s.orderBooks {
 		for _, book := range baseCurrency {
@@ -155,10 +157,14 @@ func (s *Storage) CleanUpOldOrders() {
 				}
 
 				for _, id := range sess.BuyOrders {
+					deleted++
+
 					delete(s.userOrders, id)
 				}
 
 				for _, id := range sess.SellOrders {
+					deleted++
+
 					delete(s.userOrders, id)
 				}
 
@@ -166,4 +172,6 @@ func (s *Storage) CleanUpOldOrders() {
 			}
 		}
 	}
+
+	return deleted
 }

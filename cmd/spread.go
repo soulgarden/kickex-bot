@@ -7,6 +7,8 @@ import (
 	"syscall"
 	"time"
 
+	tb "gopkg.in/tucnak/telebot.v2"
+
 	"github.com/rs/zerolog"
 	"github.com/soulgarden/kickex-bot/broker"
 	"github.com/soulgarden/kickex-bot/conf"
@@ -18,7 +20,6 @@ import (
 	"github.com/soulgarden/kickex-bot/subscriber"
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
-	tb "gopkg.in/tucnak/telebot.v2"
 )
 
 const (
@@ -233,6 +234,9 @@ func newSpreadCmd() *cobra.Command {
 				orderSvc,
 				watchSvc,
 				decideSvc,
+				spreadOrderSvc,
+				spreadTGSvc,
+				forceCheckBroker,
 				&logger,
 			)
 			if err != nil {
@@ -250,9 +254,7 @@ func newSpreadCmd() *cobra.Command {
 				for {
 					select {
 					case <-ticker.C:
-						logger.Info().Msg("run cleanup old orders")
-
-						st.CleanUpOldOrders()
+						logger.Info().Int("deleted", st.CleanUpOldOrders()).Msg("run cleanup old orders")
 					case <-ctx.Done():
 						return
 					}

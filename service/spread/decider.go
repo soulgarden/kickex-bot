@@ -76,11 +76,11 @@ func (s *Decider) Start(ctx context.Context, sess *storageSpread.Session) error 
 	for {
 		select {
 		case <-forceCheckCh:
-			if isDone, err := s.decide(sess); isDone && err != nil {
+			if isDone, err := s.decide(sess); isDone || err != nil {
 				return err
 			}
 		case <-e:
-			if isDone, err := s.decide(sess); isDone && err != nil {
+			if isDone, err := s.decide(sess); isDone || err != nil {
 				return err
 			}
 		case <-ctx.Done():

@@ -146,9 +146,7 @@ func newBuyCmd() *cobra.Command {
 				for {
 					select {
 					case <-ticker.C:
-						logger.Info().Msg("run cleanup old orders")
-
-						st.CleanUpOldOrders()
+						logger.Info().Int("deleted", st.CleanUpOldOrders()).Msg("run cleanup old orders")
 					case <-ctx.Done():
 						return
 					}

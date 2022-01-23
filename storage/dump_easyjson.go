@@ -89,7 +89,7 @@ func easyjsonF185c21aDecodeGithubComSoulgardenKickexBotStorage(in *jlexer.Lexer,
 						if v2 == nil {
 							v2 = new(response.Deal)
 						}
-						easyjsonF185c21aDecodeGithubComSoulgardenKickexBotResponse(in, v2)
+						(*v2).UnmarshalEasyJSON(in)
 					}
 					out.Deals = append(out.Deals, v2)
 					in.WantComma()
@@ -187,7 +187,7 @@ func easyjsonF185c21aEncodeGithubComSoulgardenKickexBotStorage(out *jwriter.Writ
 				if v7 == nil {
 					out.RawString("null")
 				} else {
-					easyjsonF185c21aEncodeGithubComSoulgardenKickexBotResponse(out, *v7)
+					(*v7).MarshalEasyJSON(out)
 				}
 			}
 			out.RawByte(']')
@@ -734,13 +734,9 @@ func easyjsonF185c21aDecodeGithubComSoulgardenKickexBotStorageSpread(in *jlexer.
 		case "prev_sell_order_id":
 			out.PrevSellOrderID = int64(in.Int64())
 		case "completed_buy_orders":
-			if data := in.Raw(); in.Ok() {
-				in.AddError((out.CompletedBuyOrders).UnmarshalJSON(data))
-			}
+			out.CompletedBuyOrders = int64(in.Int64())
 		case "completed_sell_orders":
-			if data := in.Raw(); in.Ok() {
-				in.AddError((out.CompletedSellOrders).UnmarshalJSON(data))
-			}
+			out.CompletedSellOrders = int64(in.Int64())
 		case "buy_total":
 			if in.IsNull() {
 				in.Skip()
@@ -855,12 +851,12 @@ func easyjsonF185c21aEncodeGithubComSoulgardenKickexBotStorageSpread(out *jwrite
 	{
 		const prefix string = ",\"completed_buy_orders\":"
 		out.RawString(prefix)
-		out.Raw((in.CompletedBuyOrders).MarshalJSON())
+		out.Int64(int64(in.CompletedBuyOrders))
 	}
 	{
 		const prefix string = ",\"completed_sell_orders\":"
 		out.RawString(prefix)
-		out.Raw((in.CompletedSellOrders).MarshalJSON())
+		out.Int64(int64(in.CompletedSellOrders))
 	}
 	{
 		const prefix string = ",\"buy_total\":"
@@ -936,97 +932,6 @@ func easyjsonF185c21aEncodeGithubComSoulgardenKickexBotStorageSpread(out *jwrite
 		const prefix string = ",\"is_done\":"
 		out.RawString(prefix)
 		out.Bool(bool(in.IsDone))
-	}
-	out.RawByte('}')
-}
-func easyjsonF185c21aDecodeGithubComSoulgardenKickexBotResponse(in *jlexer.Lexer, out *response.Deal) {
-	isTopLevel := in.IsStart()
-	if in.IsNull() {
-		if isTopLevel {
-			in.Consumed()
-		}
-		in.Skip()
-		return
-	}
-	in.Delim('{')
-	for !in.IsDelim('}') {
-		key := in.UnsafeFieldName(false)
-		in.WantColon()
-		if in.IsNull() {
-			in.Skip()
-			in.WantComma()
-			continue
-		}
-		switch key {
-		case "timestamp":
-			out.Timestamp = string(in.String())
-		case "orderId":
-			out.OrderID = int64(in.Int64())
-		case "pair":
-			out.Pair = string(in.String())
-		case "price":
-			out.Price = string(in.String())
-		case "sellVolume":
-			out.SellVolume = string(in.String())
-		case "buyVolume":
-			out.BuyVolume = string(in.String())
-		case "feeQuoted":
-			out.FeeQuoted = string(in.String())
-		case "feeExt":
-			out.FeeExt = string(in.String())
-		default:
-			in.SkipRecursive()
-		}
-		in.WantComma()
-	}
-	in.Delim('}')
-	if isTopLevel {
-		in.Consumed()
-	}
-}
-func easyjsonF185c21aEncodeGithubComSoulgardenKickexBotResponse(out *jwriter.Writer, in response.Deal) {
-	out.RawByte('{')
-	first := true
-	_ = first
-	{
-		const prefix string = ",\"timestamp\":"
-		out.RawString(prefix[1:])
-		out.String(string(in.Timestamp))
-	}
-	{
-		const prefix string = ",\"orderId\":"
-		out.RawString(prefix)
-		out.Int64(int64(in.OrderID))
-	}
-	{
-		const prefix string = ",\"pair\":"
-		out.RawString(prefix)
-		out.String(string(in.Pair))
-	}
-	{
-		const prefix string = ",\"price\":"
-		out.RawString(prefix)
-		out.String(string(in.Price))
-	}
-	{
-		const prefix string = ",\"sellVolume\":"
-		out.RawString(prefix)
-		out.String(string(in.SellVolume))
-	}
-	{
-		const prefix string = ",\"buyVolume\":"
-		out.RawString(prefix)
-		out.String(string(in.BuyVolume))
-	}
-	{
-		const prefix string = ",\"feeQuoted\":"
-		out.RawString(prefix)
-		out.String(string(in.FeeQuoted))
-	}
-	{
-		const prefix string = ",\"feeExt\":"
-		out.RawString(prefix)
-		out.String(string(in.FeeExt))
 	}
 	out.RawByte('}')
 }

@@ -84,3 +84,21 @@ allowed to create new session after 1h of inability to create an order`,
 		s.orderBook.GetMinAskPrice().Text('f', s.pair.PriceScale),
 	))
 }
+
+func (s *Tg) OldSessionStarted(sess *storageSpread.Session) {
+	s.tgSvc.SendAsync(fmt.Sprintf(
+		`env: %s,
+old sesession started,
+id: %s,
+pair: %s,
+total bought: %s,
+total sell: %s,
+total profit: %s`,
+		s.cfg.Env,
+		s.pair.GetPairName(),
+		sess.ID,
+		s.sessSvc.GetSessTotalBoughtCost(sess).Text('f', s.pair.PriceScale),
+		s.sessSvc.GetSessTotalSoldCost(sess).Text('f', s.pair.PriceScale),
+		s.orderBook.GetProfit().Text('f', s.pair.PriceScale),
+	))
+}

@@ -3,11 +3,8 @@ package spread
 import (
 	"math/big"
 	"sync"
-	"sync/atomic"
 
 	uuid "github.com/satori/go.uuid"
-
-	goAtomic "go.uber.org/atomic"
 )
 
 type Session struct {
@@ -26,8 +23,8 @@ type Session struct {
 	ActiveSellOrderID int64 `json:"active_sell_order_id"`
 	PrevSellOrderID   int64 `json:"prev_sell_order_id"`
 
-	CompletedBuyOrders  goAtomic.Int64 `json:"completed_buy_orders"`
-	CompletedSellOrders goAtomic.Int64 `json:"completed_sell_orders"`
+	CompletedBuyOrders  int64 `json:"completed_buy_orders"`
+	CompletedSellOrders int64 `json:"completed_sell_orders"`
 
 	BuyTotal   *big.Float `json:"buy_total"`
 	SellVolume *big.Float `json:"sell_total"`
@@ -68,8 +65,8 @@ func NewSession(buyVolume *big.Float) *Session {
 		ActiveSellOrderID:        0,
 		PrevSellOrderID:          0,
 		IsNeedToCreateSellOrder:  false,
-		CompletedBuyOrders:       goAtomic.Int64{},
-		CompletedSellOrders:      goAtomic.Int64{},
+		CompletedBuyOrders:       0,
+		CompletedSellOrders:      0,
 		BuyTotal:                 buyVolume,
 		SellVolume:               &big.Float{},
 		BuyOrders:                map[int64]int64{},
@@ -110,56 +107,56 @@ func (s *Session) GetPrevBuyOrderID() int64 {
 	s.mx.RLock()
 	defer s.mx.RUnlock()
 
-	return atomic.LoadInt64(&s.PrevBuyOrderID)
+	return s.PrevBuyOrderID
 }
 
 func (s *Session) SetPrevBuyOrderID(oid int64) {
 	s.mx.Lock()
 	defer s.mx.Unlock()
 
-	atomic.StoreInt64(&s.PrevBuyOrderID, oid)
+	s.PrevBuyOrderID = oid
 }
 
 func (s *Session) GetPrevSellOrderID() int64 {
 	s.mx.RLock()
 	defer s.mx.RUnlock()
 
-	return atomic.LoadInt64(&s.PrevSellOrderID)
+	return s.PrevSellOrderID
 }
 
 func (s *Session) SetPrevSellOrderID(oid int64) {
 	s.mx.Lock()
 	defer s.mx.Unlock()
 
-	atomic.StoreInt64(&s.PrevSellOrderID, oid)
+	s.PrevSellOrderID = oid
 }
 
 func (s *Session) GetActiveBuyOrderID() int64 {
 	s.mx.RLock()
 	defer s.mx.RUnlock()
 
-	return atomic.LoadInt64(&s.ActiveBuyOrderID)
+	return s.ActiveBuyOrderID
 }
 
 func (s *Session) SetActiveBuyOrderID(oid int64) {
 	s.mx.Lock()
 	defer s.mx.Unlock()
 
-	atomic.StoreInt64(&s.ActiveBuyOrderID, oid)
+	s.ActiveBuyOrderID = oid
 }
 
 func (s *Session) GetActiveSellOrderID() int64 {
 	s.mx.RLock()
 	defer s.mx.RUnlock()
 
-	return atomic.LoadInt64(&s.ActiveSellOrderID)
+	return s.ActiveSellOrderID
 }
 
 func (s *Session) SetActiveSellOrderID(oid int64) {
 	s.mx.Lock()
 	defer s.mx.Unlock()
 
-	atomic.StoreInt64(&s.ActiveSellOrderID, oid)
+	s.ActiveSellOrderID = oid
 }
 
 func (s *Session) GetActiveBuyExtOrderID() string {
@@ -253,26 +250,19 @@ func (s *Session) GetIsDone() bool {
 	return s.IsDone
 }
 
-func (s *Session) SetIsDone(isDone bool) {
+func (s *Session) SetBuyOrderDoneFlags(oid int64, sellVolume *big.Float) {
 	s.mx.Lock()
 	defer s.mx.Unlock()
 
-	s.IsDone = isDone
-}
+	s.CompletedBuyOrders++
 
-func (s *Session) SetBuyOrderExecutedFlags(oid int64, sellVolume *big.Float) {
-	s.mx.Lock()
-	defer s.mx.Unlock()
-
-	s.CompletedBuyOrders.Add(1)
-
-	atomic.StoreInt64(&s.PrevBuyOrderID, 0)
-	atomic.StoreInt64(&s.ActiveBuyOrderID, oid)
+	s.PrevBuyOrderID = 0
+	s.ActiveBuyOrderID = oid
 
 	s.ActiveBuyExtOrderID = ""
 	s.activeBuyOrderRequestID = ""
 
-	atomic.StoreInt64(&s.ActiveSellOrderID, 0)
+	s.ActiveSellOrderID = 0
 
 	s.ActiveSellExtOrderID = ""
 	s.activeSellOrderRequestID = ""
@@ -280,16 +270,37 @@ func (s *Session) SetBuyOrderExecutedFlags(oid int64, sellVolume *big.Float) {
 	s.SellVolume = sellVolume
 }
 
-func (s *Session) SetSellOrderExecutedFlags() {
+func (s *Session) SetSellOrderDoneFlags() {
 	s.mx.Lock()
 	defer s.mx.Unlock()
 
-	s.CompletedSellOrders.Add(1)
+	s.CompletedSellOrders++
 
-	atomic.StoreInt64(&s.PrevSellOrderID, 0)
-	atomic.StoreInt64(&s.ActiveSellOrderID, 0)
+	s.PrevSellOrderID = 0
+	s.ActiveSellOrderID = 0
+
+	s.ActiveSellExtOrderID = ""
+	s.activeSellOrderRequestID = ""
 
 	s.IsDone = true
+}
+
+func (s *Session) SetBuyOrderCancelledFlags() {
+	s.mx.Lock()
+	defer s.mx.Unlock()
+
+	s.ActiveBuyExtOrderID = ""
+	s.activeBuyOrderRequestID = ""
+	s.IsNeedToCreateBuyOrder = true
+}
+
+func (s *Session) SetSellOrderCancelledFlags() {
+	s.mx.Lock()
+	defer s.mx.Unlock()
+
+	s.ActiveSellExtOrderID = ""
+	s.activeSellOrderRequestID = ""
+	s.IsNeedToCreateSellOrder = true
 }
 
 func (s *Session) AddBuyOrder(oid int64) {

@@ -30,6 +30,7 @@ import (
 
 const spreadForAlert = 0.5
 
+const firstStepOrderExecutionDuration = time.Second * 5
 const orderExecutionDuration = time.Minute * 5
 const lastStepOrderExecutionDuration = time.Minute * 60
 const chSize = 1024
@@ -278,7 +279,7 @@ func (s *Arbitrage) checkBuyBaseOption(
 				baseBuyOrderAmount,
 				startBuyVolume,
 			)
-			if err != nil {
+			if err != nil || buyBaseOrder == nil {
 				return err
 			}
 
@@ -290,7 +291,7 @@ func (s *Arbitrage) checkBuyBaseOption(
 				baseQuotedSellOrder,
 				baseQuotedSellOrderTotal,
 			)
-			if err != nil {
+			if err != nil || sellBaseOrder == nil {
 				return err
 			}
 
@@ -303,7 +304,7 @@ func (s *Arbitrage) checkBuyBaseOption(
 					quotedSellOrder,
 					quotedSellOrderUSDTAmount,
 				)
-				if err != nil {
+				if err != nil || sellQuotedOrder == nil {
 					return
 				}
 
@@ -341,7 +342,7 @@ func (s *Arbitrage) buyBaseForUSDT(
 		baseBuyOrderAmount,
 		baseBuyOrder.Price,
 		dictionary.BuyBase,
-		orderExecutionDuration,
+		firstStepOrderExecutionDuration,
 	)
 	s.logger.Err(err).Str("pair", baseUSDTPair.GetPairName()).Int64("oid", oid).Msg("create order")
 

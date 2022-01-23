@@ -250,7 +250,7 @@ func (s *Order) SetBuyOrderExecutedFlags(sess *storageSpread.Session, order *sto
 		return err
 	}
 
-	sess.SetBuyOrderExecutedFlags(order.ID, s.sessSvc.GetSessTotalBoughtVolume(sess))
+	sess.SetBuyOrderDoneFlags(order.ID, s.sessSvc.GetSessTotalBoughtVolume(sess))
 
 	s.orderBook.SubProfit(s.sessSvc.GetSessTotalBoughtCost(sess))
 	s.forceCheckBroker.Publish(struct{}{})
@@ -283,7 +283,7 @@ func (s *Order) SetSellOrderExecutedFlags(sess *storageSpread.Session, order *st
 		}
 	}
 
-	sess.SetSellOrderExecutedFlags()
+	sess.SetSellOrderDoneFlags()
 
 	s.orderBook.AddProfit(s.sessSvc.GetSessTotalSoldCost(sess))
 

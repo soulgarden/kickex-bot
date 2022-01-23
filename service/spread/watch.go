@@ -184,7 +184,7 @@ func (s *Watch) checkOrderState(
 		spread := s.spreadOrderSvc.calcBuySpread(sess.GetActiveBuyOrderID())
 
 		if spread.Cmp(s.spreadForStopBuyTrade) == -1 && s.orderBook.GetSpread().Cmp(dictionary.ZeroBigFloat) == 1 {
-			return s.cancelBuyOrder(sess, oid, spread)
+			return s.cancelBuyOrder(sess, oid, spread.String())
 		}
 
 		if s.isMoveBuyOrderRequired(sess, order) {
@@ -197,7 +197,7 @@ func (s *Watch) checkOrderState(
 
 		// cancel sell order
 		if spread.Cmp(s.spreadForStopBuyTrade) == -1 {
-			return s.cancelSellOrder(sess, oid, spread)
+			return s.cancelSellOrder(sess, oid, spread.String())
 		}
 
 		if s.isMoveSellOrderRequired(sess, order) {
@@ -303,12 +303,12 @@ func (s *Watch) moveBuyOrder(sess *storageSpread.Session, order *storage.Order, 
 	return true, nil
 }
 
-func (s *Watch) cancelBuyOrder(sess *storageSpread.Session, oid int64, spread *big.Float) (hasFinalState bool, err error) {
+func (s *Watch) cancelBuyOrder(sess *storageSpread.Session, oid int64, spread string) (hasFinalState bool, err error) {
 	s.logger.Warn().
 		Str("id", sess.ID).
 		Str("pair", s.pair.GetPairName()).
 		Int64("oid", oid).
-		Str("spread", spread.String()).
+		Str("spread", spread).
 		Msg("time to cancel buy order")
 
 	err = s.orderSvc.CancelOrder(oid)
@@ -341,7 +341,7 @@ func (s *Watch) cancelBuyOrder(sess *storageSpread.Session, oid int64, spread *b
 	return true, nil
 }
 
-func (s *Watch) cancelSellOrder(sess *storageSpread.Session, oid int64, spread *big.Float) (
+func (s *Watch) cancelSellOrder(sess *storageSpread.Session, oid int64, spread string) (
 	hasFinishedState bool,
 	err error,
 ) {
@@ -349,7 +349,7 @@ func (s *Watch) cancelSellOrder(sess *storageSpread.Session, oid int64, spread *
 		Str("id", sess.ID).
 		Str("pair", s.pair.GetPairName()).
 		Int64("oid", oid).
-		Str("spread", spread.String()).
+		Str("spread", spread).
 		Msg("time to cancel sell order")
 
 	err = s.orderSvc.CancelOrder(oid)
