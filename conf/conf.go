@@ -23,8 +23,9 @@ type Bot struct {
 		TotalBuyInUSDT         string `json:"total_buy_in_usdt" required:"true"`
 	} `json:"spread"`
 	Arbitrage struct {
-		Pair           string `json:"pair" required:"true"`
-		TotalBuyInUSDT string `json:"total_buy_in_usdt" required:"true"`
+		Pair            string  `json:"pair" required:"true"`
+		TotalBuyInUSDT  string  `json:"total_buy_in_usdt" required:"true"`
+		PercentForStart float64 `json:"percent_for_start"`
 	} `json:"arbitrage"`
 	Buy struct {
 		Pair                  string `json:"pair"                      required:"true"`

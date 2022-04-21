@@ -11,4 +11,5 @@ issues:
         - wrapcheck
         - tagliatelle
         - dupl
+        - varnamelen
   enable-all: true

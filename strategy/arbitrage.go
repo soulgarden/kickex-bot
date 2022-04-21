@@ -28,8 +28,6 @@ import (
 	"github.com/soulgarden/kickex-bot/storage"
 )
 
-const spreadForAlert = 0.5
-
 const firstStepOrderExecutionDuration = time.Second * 5
 const orderExecutionDuration = time.Minute * 5
 const lastStepOrderExecutionDuration = time.Minute * 60
@@ -268,7 +266,7 @@ func (s *Arbitrage) checkBuyBaseOption(
 			Str("spread", spread.Text('f', dictionary.DefaultPrecision)).
 			Msg("pair spread")
 
-		if spread.Cmp(big.NewFloat(spreadForAlert)) == 1 {
+		if spread.Cmp(big.NewFloat(s.cfg.Arbitrage.PercentForStart)) == 1 {
 			s.arbTSvc.SendTGBuyBaseArbitrageAvailable(baseQuotedPair, startBuyVolume, quotedSellOrderUSDTAmount, spread)
 
 			// 1. buy base for USDT
@@ -503,7 +501,7 @@ func (s *Arbitrage) checkBuyQuotedOptions(
 			Str("spread", spread.Text('f', dictionary.DefaultPrecision)).
 			Msg("pair spread")
 
-		if spread.Cmp(big.NewFloat(spreadForAlert)) == 1 {
+		if spread.Cmp(big.NewFloat(s.cfg.Arbitrage.PercentForStart)) == 1 {
 			s.arbTSvc.SendTGBuyQuotedArbitrageAvailable(baseQuotedPair, quotedUSDTPair, baseSellOrderUSDTAmount, spread)
 		}
 	}

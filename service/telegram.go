@@ -3,6 +3,8 @@ package service
 import (
 	"time"
 
+	"github.com/soulgarden/kickex-bot/dictionary"
+
 	"github.com/soulgarden/kickex-bot/conf"
 
 	"github.com/rs/zerolog"
@@ -37,6 +39,15 @@ func (s *Telegram) Start() {
 }
 
 func (s *Telegram) SendAsync(msg string) {
+	if len(s.sendCh) == queueSize {
+		s.logger.
+			Err(dictionary.ErrChannelOverflowed).
+			Interface("msg", msg).
+			Msg(dictionary.ErrChannelOverflowed.Error())
+
+		return
+	}
+
 	s.sendCh <- msg
 }
 
