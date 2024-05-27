@@ -6,7 +6,7 @@ require (
 	github.com/gorilla/websocket v1.5.1
 	github.com/jinzhu/configor v1.2.2
 	github.com/mailru/easyjson v0.7.7
-	github.com/rs/zerolog v1.32.0
+	github.com/rs/zerolog v1.33.0
 	github.com/satori/go.uuid v1.2.0
 	github.com/spf13/cobra v1.8.0
 	github.com/tevino/abool v1.2.0
@@ -16,7 +16,7 @@ require (
 )
 
 require (
-	github.com/BurntSushi/toml v1.3.2 // indirect
+	github.com/BurntSushi/toml v1.4.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
