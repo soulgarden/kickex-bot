@@ -3,12 +3,12 @@ module github.com/soulgarden/kickex-bot
 go 1.17
 
 require (
-	github.com/gorilla/websocket v1.5.2
+	github.com/gorilla/websocket v1.5.3
 	github.com/jinzhu/configor v1.2.2
 	github.com/mailru/easyjson v0.7.7
 	github.com/rs/zerolog v1.33.0
 	github.com/satori/go.uuid v1.2.0
-	github.com/spf13/cobra v1.8.0
+	github.com/spf13/cobra v1.8.1
 	github.com/tevino/abool v1.2.0
 	go.uber.org/atomic v1.11.0
 	golang.org/x/sync v0.7.0
@@ -23,7 +23,6 @@ require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
-	golang.org/x/net v0.26.0 // indirect
 	golang.org/x/sys v0.21.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
